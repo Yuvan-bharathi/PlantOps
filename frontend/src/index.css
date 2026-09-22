@@ -1,0 +1,107 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --page-bg: #F3F1EC;
+  --card-bg: #FAF9F6;
+  --floor-bg: #E5E2DA;
+  --border-warm: #DDD9D0;
+  --hover-warm: #EAE7E0;
+  --text-main: #1E293B;
+  --text-muted: #64748B;
+  --primary-blue: #2563EB;
+  --secondary-teal: #0F766E;
+  
+  --status-running: #22A06B;
+  --status-warning: #D99A06;
+  --status-fault: #D64545;
+  --status-maintenance: #3978C8;
+  --status-verifying: #7C5CC4;
+  --status-offline: #7A7A73;
+}
+
+body {
+  margin: 0;
+  background-color: #F3F1EC;
+  color: #1E293B;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #EAE7E0; }
+::-webkit-scrollbar-thumb { background: #DDD9D0; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #B8B7B1; }
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Card / Panel Utility */
+.card-warm {
+  background: #FAF9F6;
+  border: 1px solid #DDD9D0;
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(30, 41, 59, 0.04);
+}
+
+.card {
+  background: #FAF9F6;
+  border: 1px solid #DDD9D0;
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(30, 41, 59, 0.04);
+}
+
+/* Status badges with warm harmonious backgrounds */
+.badge-running     { background: #E8F6EF; color: #1D8358; border: 1px solid #B4E3CF; }
+.badge-warning     { background: #FEF7E6; color: #B47F05; border: 1px solid #F8DF9E; }
+.badge-fault       { background: #FCECEB; color: #B93232; border: 1px solid #F6BEBC; }
+.badge-maintenance { background: #EBF2FA; color: #2E62A5; border: 1px solid #BAD5F3; }
+.badge-verifying   { background: #F2EEFA; color: #6548A3; border: 1px solid #D4C7F2; }
+.badge-offline     { background: #F2F1EE; color: #5E5E57; border: 1px solid #D5D3CC; }
+
+/* Navigation */
+.nav-item {
+  border-radius: 8px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-item:hover:not(.nav-item-active) { background: #EAE7E0; }
+.nav-item-active { background: #2563EB !important; color: #FFFFFF !important; }
+.nav-item-active svg { color: #FFFFFF !important; }
+
+/* Pulse animation for active machine halos */
+@keyframes status-pulse {
+  0%, 100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.08);
+  }
+}
+
+.animate-status-pulse {
+  animation: status-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Radar scan effect */
+@keyframes radar-scan {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-radar {
+  animation: radar-scan 8s linear infinite;
+}
+

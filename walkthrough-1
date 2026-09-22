@@ -1,0 +1,127 @@
+# PlantOps (ForgeTwin AI) — Capstone MVP Implementation Walkthrough
+
+## 1. Overview of Accomplishments
+
+We have successfully designed, built, containerized, and verified the complete **PlantOps (ForgeTwin AI) T0 + T1 Capstone MVP** matching the exact architecture frozen from the Enterprise Requirements Specification.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                       PLANTOPS                              │
+│ AI-Powered Predictive Maintenance & Autonomous Procurement  │
+└─────────────────────────────────────────────────────────────┘
+
+Frontend (React + Three.js + React Three Fiber + Tailwind CSS)
+   │
+   │ REST API (port 4000) + WebSocket (Socket.IO)
+   ▼
+Backend (Node.js + TypeScript Modular Monolith)
+   │
+   ├───────────────┬────────────────┬────────────────┐
+   ▼               ▼                ▼                ▼
+MySQL 8.0     TimescaleDB        Redis 7       Mosquitto MQTT
+Business Data  Telemetry Logs     Cache/PubSub   Broker (port 1883)
+                                                     │
+                                                     ▼
+                                              IoT Simulator
+                                          (5 Virtual Assets)
+```
+
+---
+
+## 2. Components Implemented
+
+### A. Infrastructure & Databases (`docker/`)
+- **Mosquitto MQTT 2.0 Broker**: Streams live IIoT sensor telemetry (`plant/+/telemetry`).
+- **MySQL 8.0 (System of Record)**: Transactional storage for Machines, Components, Incidents, Work Orders, Technicians, Inventory, Suppliers, Purchase Orders, Policies, Human Review Items, and Audit Logs.
+- **TimescaleDB / PostgreSQL**: Partitioned hypertable for high-frequency time-series telemetry.
+- **Redis 7**: High-performance cache, pub/sub and lock manager.
+
+### B. Virtual IIoT Sensor Simulator (`simulator/`)
+- Simulates 5 industrial machines:
+  1. `CNC-01`: High-Precision 5-Axis Milling Center
+  2. `CNC-02`: Heavy Duty Lathe & Turning Cell
+  3. `ROBOT-01`: Articulated 6-Axis Pick & Place Robot
+  4. `PUMP-01`: High-Pressure Hydraulic Coolant Pump
+  5. `MIXER-01`: High-Shear Lubricant & Chemical Mixer
+- Gaussian noise telemetry generation (Temperature, Vibration, Current, RPM, Pressure).
+- HTTP Control API (`http://localhost:4001`) with `/inject-fault` and `/heal-machine` endpoints for live interactive demonstrations.
+
+### C. Backend Modular Monolith (`backend/`)
+- **Telemetry Ingestion & State Machine**: Evaluates deterministic warning and fault thresholds on live MQTT feeds.
+- **AI Diagnosis & RAG Engine**: Calculates root cause breakdown, confidence scores ($\ge 85\%$), BOM spare parts mapping, and step-by-step SOP procedures.
+- **Maintenance & Technician Dispatch**: Assigns certified technicians by skills and manages OSHA-compliant Lockout/Tagout (LOTO) checklists.
+- **Deterministic Policy Engine**: Governs autonomous purchase orders using strict policy rules (`POL-01` Auto-PO cap at $1,000, supplier vetting, loop guards).
+- **Post-Repair Verification Engine**: Observes live post-repair sensor feeds for 3 consecutive clean cycles before recovering machines back to `RUNNING` (98% Health).
+- **Domo Analytics Sync**: Exposes curated operational KPI feeds (OEE, MTTR, MTBF, Availability, Auto-PO compliance rate, Spares spend).
+
+### D. React 3D Digital Twin & Operations Workspace (`frontend/`)
+- **React Three Fiber 3D Factory Floor**: Interactive 3D scene with dynamic floor halos, status beacon lamps, orbiting controls, and real-time color states:
+  - 🟢 **RUNNING** (`#10B981`)
+  - 🟡 **WARNING** (`#F59E0B`)
+  - 🔴 **FAULT** (`#EF4444`)
+  - 🔵 **MAINTENANCE** (`#3B82F6`)
+  - 🩵 **VERIFYING** (`#06B6D4`)
+- **Deep-Dive Asset Drawer**: Live telemetry gauges, AI diagnosis card, assigned technician, required part ATP check, and LOTO action buttons.
+- **Incident Timeline**: Closed-loop audit sequence tracking.
+- **MRO Spares Inventory & ATP**: Real-time Available-to-Promise table (`ATP = On Hand - Reserved`).
+- **Autonomous Procurement**: Purchase orders with applied policy rule badges.
+- **Human Review Center**: Manager escalation queue with 1-click Approve & Release.
+- **Domo Analytics Dashboard**: Executive KPIs and architectural boundaries.
+
+---
+
+## 3. Verified End-to-End Closed Loop Results
+
+The automated end-to-end closed loop test executed across all services and produced the following verified result:
+
+```text
+1. INJECT FAULT:
+   Simulator injected bearing wear anomaly on CNC-01 (Vibration = 9.4 mm/s, Temp = 82°C).
+
+2. STATE MACHINE & 3D DIGITAL TWIN:
+   MQTT ingested reading -> Threshold breached -> CNC-01 transitioned to FAULT (25% Health, Red 3D Halo).
+
+3. AI RAG DIAGNOSIS:
+   Incident INC-1473 created.
+   AI Root Cause: "Spindle Front Angular Contact Bearing Fluting & Severe Cage Wear"
+   Confidence: 94.2%
+   Required Part: SKF-6205-2RSH
+
+4. INVENTORY ATP & POLICY-GOVERNED PROCUREMENT:
+   ATP = 0 (Stockout) -> Policy Engine evaluated POL-01 (Spend $145 <= $1000, High AI Conf, Preferred Supplier) -> ALLOWED.
+   PO-7202 created (Status: RECEIVED via simulated expedited delivery).
+
+5. WORK ORDER & SAFETY LOTO:
+   WO-8058 dispatched to Technician -> LOTO safety lock applied & verified.
+
+6. PHYSICAL REPAIR & HEALTH VERIFICATION:
+   Technician completed repair -> Machine entered VERIFYING (Teal status) -> Telemetry normalized ->
+   Automated 3-cycle baseline verification passed -> Machine recovered to RUNNING (98% Health, Green 3D Halo).
+
+7. DOMO ANALYTICS SYNC:
+   KPIs updated: OEE 88.4%, MTTR 42.5 min, Auto-PO Rate 100%, Spend $145.00.
+```
+
+---
+
+## 4. How to Run Locally
+
+1. **Start Infrastructure**:
+   ```bash
+   docker compose up -d
+   ```
+2. **Start Backend**:
+   ```bash
+   cd backend && npm run dev
+   # Listening on http://localhost:4000
+   ```
+3. **Start IoT Simulator**:
+   ```bash
+   cd simulator && npm run dev
+   # Listening on http://localhost:4001
+   ```
+4. **Start Frontend 3D Twin**:
+   ```bash
+   cd frontend && npm run dev
+   # Open in browser at http://localhost:3000
+   ```

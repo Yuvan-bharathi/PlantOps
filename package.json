@@ -1,0 +1,19 @@
+{
+  "name": "plantops-root",
+  "version": "1.0.0",
+  "description": "PlantOps AI Predictive Maintenance & Autonomous Ops Platform",
+  "private": true,
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:simulator": "npm --prefix simulator run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build && npm --prefix simulator run build",
+    "start": "npm --prefix backend run dev"
+  },
+  "keywords": [
+    "plantops",
+    "predictive-maintenance",
+    "iot",
+    "digital-twin"
+  ]
+}

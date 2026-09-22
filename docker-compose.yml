@@ -1,0 +1,76 @@
+services:
+  # MQTT Broker for IoT telemetry streaming
+  mosquitto:
+    image: eclipse-mosquitto:2.1-alpine
+    container_name: plantops-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./infrastructure/mosquitto/config:/mosquitto/config
+      - ./infrastructure/mosquitto/data:/mosquitto/data
+      - ./infrastructure/mosquitto/log:/mosquitto/log
+
+  # MySQL for transactional business data (Assets, Work Orders, POs, Inventory, Policies, Audit)
+  mysql:
+    image: mysql:8.0
+    container_name: plantops-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: plantops_db
+      MYSQL_USER: plantops
+      MYSQL_PASSWORD: plantopspassword
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL / TimescaleDB for high-frequency sensor telemetry logs
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: plantops-timescale
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: plantops_telemetry
+      POSTGRES_USER: plantops
+      POSTGRES_PASSWORD: plantopspassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./docker/timescale/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plantops -d plantops_telemetry"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for cache, lock management and fast pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: plantops-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  mysql_data:
+  timescale_data:
+  redis_data:
