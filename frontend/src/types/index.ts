@@ -14,7 +14,16 @@ export interface Machine {
   pos_z: number;
   components?: Array<{ id: string; name: string; type: string; criticality: string }>;
   telemetry?: TelemetryData;
+  /** Server-authoritative runtime/downtime tracking — set only by the backend
+   * lifecycle state machine, never computed client-side. */
+  last_running_started_at?: string | null;
+  total_runtime_seconds?: number;
+  downtime_started_at?: string | null;
 }
+
+export type TechnicianPhase =
+  | 'ASSIGNING' | 'ASSIGNED' | 'EN_ROUTE' | 'ARRIVED' | 'LOTO' | 'INSPECTING'
+  | 'WAITING_PARTS' | 'REPAIRING' | 'VERIFYING' | 'COMPLETED' | 'RETURNING' | 'AVAILABLE';
 
 export interface TelemetryData {
   machineId: string;
@@ -82,6 +91,9 @@ export interface WorkOrder {
   technician_id?: string;
   technician_name?: string;
   technician_role?: string;
+  /** Backend-authoritative technician lifecycle phase for this work order —
+   * independent of machine.status (see TechnicianPhase). */
+  technician_phase?: TechnicianPhase | string;
   priority: string;
   status: string;
   loto_required: boolean;

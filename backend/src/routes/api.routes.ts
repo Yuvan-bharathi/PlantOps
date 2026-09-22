@@ -9,6 +9,7 @@ import {
 } from '../services/maintenance.service.js';
 import { approveHumanReviewItem } from '../services/procurement.service.js';
 import { checkATP } from '../services/inventory.service.js';
+import { getDowntimeBreakdown } from '../services/eventRecorder.service.js';
 import { getSOPsHandler, searchSOPsHandler, askSOPHandler } from '../controllers/knowledge.controller.js';
 
 const router = Router();
@@ -296,12 +297,12 @@ router.get('/incidents/:id/downtime', async (req, res) => {
       [id]
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Incident not found' });
-    res.json({ success: true, data: rows[0] });
+    const breakdown = await getDowntimeBreakdown(id);
+    res.json({ success: true, data: { ...rows[0], breakdown } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 
 // ==========================================

@@ -37,6 +37,21 @@ export function clearActiveIncident(machineCode: string) {
   console.log(`[TelemetryService] Reset active incident state for ${machineCode}. Ready for next single-machine fault injection.`);
 }
 
+/**
+ * Lets the maintenance/verification services synchronize the in-memory
+ * telemetry-evaluation state machine with a backend-driven status change
+ * (MAINTENANCE/WAITING_PARTS/VERIFYING/FAULT) that didn't originate from a
+ * threshold breach. Without this, machineStateMemory never leaves
+ * 'RUNNING'/'WARNING'/'FAULT' (the only values processTelemetry() itself
+ * writes), so a 'VERIFYING' DB status set by completeRepair() would never
+ * actually route subsequent telemetry ticks into processVerificationReading().
+ */
+export type MachineMemoryStatus = 'RUNNING' | 'WARNING' | 'FAULT' | 'MAINTENANCE' | 'WAITING_PARTS' | 'VERIFYING';
+
+export function setMachineMemoryState(machineCode: string, status: MachineMemoryStatus) {
+  machineStateMemory[machineCode] = status;
+}
+
 export function initTelemetryService() {
   console.log(`[TelemetryService] Connecting to MQTT broker at ${config.mqtt.brokerUrl}...`);
 
@@ -105,6 +120,16 @@ export async function processTelemetry(data: TelemetryPayload) {
     return;
   }
 
+  // 3b. A technician is actively working this machine (MAINTENANCE / WAITING_PARTS).
+  // Ordinary telemetry threshold evaluation MUST NOT resurrect the machine to
+  // RUNNING, nor re-fault it, while a repair workflow is in progress — only
+  // maintenance.service.ts / verification.service.ts may change status during
+  // this window. Sensor values still stream live (step 1) so the UI keeps
+  // showing real readings; they just stop driving machines.status.
+  if (currentStatus === 'MAINTENANCE' || currentStatus === 'WAITING_PARTS') {
+    return;
+  }
+
   // 4. Deterministic Threshold Evaluation
   // Thresholds:
   // Normal: Vib < 5.0, Temp < 70, Pressure 4-8 bar, Current < 15A
@@ -131,10 +156,28 @@ export async function processTelemetry(data: TelemetryPayload) {
 
     // Update MySQL
     try {
-      await execute(
-        `UPDATE machines SET status = ?, health_score = ? WHERE code = ? OR id = ?`,
-        [evaluatedStatus, healthScore, machineCode, machineCode]
-      );
+      if (isFault) {
+        // Entering FAULT stops the runtime clock and starts the downtime clock —
+        // both derived from the DB server clock, never Date.now(). Any runtime
+        // accrued since last_running_started_at is folded into the cumulative total.
+        await execute(
+          `UPDATE machines
+             SET status = ?, health_score = ?,
+                 total_runtime_seconds = total_runtime_seconds +
+                   CASE WHEN last_running_started_at IS NOT NULL
+                        THEN TIMESTAMPDIFF(MICROSECOND, last_running_started_at, CURRENT_TIMESTAMP(3)) / 1000000.0
+                        ELSE 0 END,
+                 last_running_started_at = NULL,
+                 downtime_started_at = CURRENT_TIMESTAMP(3)
+           WHERE code = ? OR id = ?`,
+          [evaluatedStatus, healthScore, machineCode, machineCode]
+        );
+      } else {
+        await execute(
+          `UPDATE machines SET status = ?, health_score = ? WHERE code = ? OR id = ?`,
+          [evaluatedStatus, healthScore, machineCode, machineCode]
+        );
+      }
     } catch (err) {
       console.warn(`[TelemetryService] Could not update machine table: ${err}`);
     }

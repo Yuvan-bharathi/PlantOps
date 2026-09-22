@@ -151,7 +151,47 @@ const severityDot = (s: string) => ({
 export const DashboardPage: React.FC<DashboardProps> = ({
   machines, incidents, workOrders, inventory, purchaseOrders, reviewItems, onSelectTab, onRefresh,
 }) => {
-  const activeIncidents = incidents.filter(i => i.status !== 'CLOSED');
+  // RESOLVED incidents are done (machine verified back to RUNNING) — only
+  // 'CLOSED' being excluded here was a bug: incidents never actually reach
+  // 'CLOSED' in this build, so a fully-resolved incident would otherwise sit
+  // in Active Alerts forever.
+  const activeIncidents = incidents.filter(i => i.status !== 'CLOSED' && i.status !== 'RESOLVED');
+
+  // Incident.status only ever holds DETECTED/DISPATCHED/VERIFYING/RESOLVED —
+  // far coarser than the real machine/technician lifecycle. The machine's own
+  // status (now backend-authoritative through MAINTENANCE/WAITING_PARTS/
+  // VERIFYING) plus the active work order's technician_phase are what
+  // actually reflect where the repair stands, so derive the alert's
+  // second line from those instead of the raw incident status string.
+  const alertStatusLabel = (inc: Incident): string => {
+    const machine = machines.find(m => m.id === inc.machine_id || m.code === inc.machine_code);
+    const wo = workOrders.find(w => w.incident_id === inc.id && w.status !== 'COMPLETED' && w.status !== 'CANCELLED');
+    const phase = wo?.technician_phase;
+    switch (machine?.status) {
+      case 'WAITING_PARTS': return 'WAITING FOR PARTS';
+      case 'MAINTENANCE':
+        if (phase === 'INSPECTING') return 'MAINTENANCE · INSPECTION';
+        if (phase === 'LOTO') return 'MAINTENANCE · LOTO';
+        if (phase === 'REPAIRING') return 'MAINTENANCE · REPAIR';
+        return 'MAINTENANCE';
+      case 'VERIFYING': return 'VERIFYING';
+      case 'FAULT':
+        return (phase === 'EN_ROUTE' || phase === 'ASSIGNED' || phase === 'ASSIGNING')
+          ? 'TECHNICIAN EN ROUTE' : 'FAULT DETECTED';
+      case 'RUNNING': return 'RESOLVING';
+      default: return inc.status;
+    }
+  };
+  const alertStatusColor = (inc: Incident): string => {
+    const machine = machines.find(m => m.id === inc.machine_id || m.code === inc.machine_code);
+    switch (machine?.status) {
+      case 'MAINTENANCE': return 'text-blue-600';
+      case 'WAITING_PARTS': return 'text-orange-600';
+      case 'VERIFYING': return 'text-purple-600';
+      case 'FAULT': return 'text-rose-600';
+      default: return 'text-slate-400';
+    }
+  };
   const openWOs = workOrders.filter(w => w.status !== 'COMPLETED');
   const totalATP = inventory.reduce((s, i) => s + (i.available_to_promise || 0), 0);
   const pendingPOs = purchaseOrders.filter(p => ['PENDING','PENDING_APPROVAL','APPROVED'].includes(p.status));
@@ -306,7 +346,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                     )}
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <div className="text-[11px] text-slate-400 font-mono">{inc.status}</div>
+                    <div className={`text-[11px] font-mono font-bold ${alertStatusColor(inc)}`}>{alertStatusLabel(inc)}</div>
                     <button onClick={() => onSelectTab('twin')} className="text-[10px] text-blue-600 font-semibold hover:underline mt-0.5">View →</button>
                   </div>
                 </div>

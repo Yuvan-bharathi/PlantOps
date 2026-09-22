@@ -105,6 +105,22 @@ export const App: React.FC = () => {
     });
     socket.on('incident:created', () => api.getIncidents().then(r => r.success && setIncidents(r.data)));
     socket.on('workorder:created', () => api.getWorkOrders().then(r => r.success && setWorkOrders(r.data)));
+    // The Dashboard's active-alert card and the Digital Twin both read
+    // incident.status/work_order.technician_phase straight from this
+    // App-level state. Without these listeners, incidents/work orders were
+    // only ever refetched at creation and final resolution — every
+    // intermediate lifecycle step (arrival, LOTO, inspection, repair
+    // complete) silently went stale until some other button's onRefresh()
+    // happened to fire in the same tab.
+    const refreshWorkflow = () => {
+      api.getIncidents().then(r => r.success && setIncidents(r.data));
+      api.getWorkOrders().then(r => r.success && setWorkOrders(r.data));
+    };
+    socket.on('workorder:arrived', refreshWorkflow);
+    socket.on('workorder:loto', refreshWorkflow);
+    socket.on('workorder:inspected', refreshWorkflow);
+    socket.on('workorder:completed', refreshWorkflow);
+    socket.on('technician:updated', refreshWorkflow);
     socket.on('po:updated', () => {
       api.getPurchaseOrders().then(r => r.success && setPurchaseOrders(r.data));
       api.getHumanReviewItems().then(r => r.success && setReviewItems(r.data));
@@ -121,6 +137,11 @@ export const App: React.FC = () => {
       socket.off('machine:status_changed');
       socket.off('incident:created');
       socket.off('workorder:created');
+      socket.off('workorder:arrived');
+      socket.off('workorder:loto');
+      socket.off('workorder:inspected');
+      socket.off('workorder:completed');
+      socket.off('technician:updated');
       socket.off('po:updated');
       socket.off('po:received');
       socket.off('incident:resolved');

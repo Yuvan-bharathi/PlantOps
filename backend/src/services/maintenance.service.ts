@@ -6,6 +6,15 @@ import { checkATP, reservePart } from './inventory.service.js';
 import { processProcurement } from './procurement.service.js';
 import { runAIMaintenanceOrchestration, MachineContext } from './aiOrchestrator.service.js';
 import { recordEvent, stampIncident } from './eventRecorder.service.js';
+import { setMachineMemoryState } from './telemetry.service.js';
+
+/** Broadcasts a technician lifecycle-phase change. Machine state and technician
+ * state are independent entities — this is deliberately never merged into the
+ * machine:status_changed payload. */
+function broadcastTechnicianUpdate(technicianId: string | null | undefined, workOrderId: string, phase: string) {
+  if (!technicianId) return;
+  broadcast('technician:updated', { technicianId, workOrderId, phase, timestamp: new Date().toISOString() });
+}
 
 export interface CreateWorkOrderParams {
   incidentId: string;
@@ -65,10 +74,12 @@ export async function createWorkOrderAndDispatch(params: CreateWorkOrderParams) 
 
     console.log(`[MaintenanceService] AI Orchestration Decision: Dispatched ${orchestration.assignedTechnicianName} (${(orchestration.matchConfidence * 100).toFixed(0)}% suitability) to ${machine.code}.`);
 
-    // 4. Insert Work Order
+    // 4. Insert Work Order — technician_phase starts at EN_ROUTE because dispatch
+    // (this single orchestration call) is the moment the technician starts walking;
+    // there is no separate UI action for ASSIGNING/ASSIGNED in this build.
     await execute(
-      `INSERT INTO work_orders (id, incident_id, machine_id, technician_id, priority, status, loto_required, loto_applied, notes, assigned_at)
-       VALUES (?, ?, ?, ?, ?, 'DISPATCHED', TRUE, FALSE, ?, NOW())`,
+      `INSERT INTO work_orders (id, incident_id, machine_id, technician_id, priority, status, loto_required, loto_applied, notes, assigned_at, technician_phase)
+       VALUES (?, ?, ?, ?, ?, 'DISPATCHED', TRUE, FALSE, ?, NOW(), 'EN_ROUTE')`,
       [
         woId,
         params.incidentId,
@@ -147,6 +158,7 @@ export async function createWorkOrderAndDispatch(params: CreateWorkOrderParams) 
     };
 
     broadcast('workorder:created', payload);
+    broadcastTechnicianUpdate(orchestration.assignedTechnicianId, woId, 'EN_ROUTE');
     return payload;
   } catch (err: any) {
     console.error(`[MaintenanceService] createWorkOrder error: ${err.message}`);
@@ -166,15 +178,40 @@ export async function submitPhysicalInspection(params: PhysicalInspectionParams)
   try {
     let incidentId = 'INC-INIT-01';
     let machineId = 'MCH-CNC-01';
+    let machineCode = 'CNC-01';
+    let technicianId: string | null = null;
+    let alreadyInspected = false;
 
     try {
-      const woRows = await query<any>(`SELECT * FROM work_orders WHERE id = ? LIMIT 1`, [params.workOrderId]);
+      const woRows = await query<any>(
+        `SELECT wo.*, m.code as machine_code FROM work_orders wo JOIN machines m ON m.id = wo.machine_id WHERE wo.id = ? LIMIT 1`,
+        [params.workOrderId]
+      );
       if (woRows && woRows.length > 0) {
         incidentId = woRows[0].incident_id || incidentId;
         machineId = woRows[0].machine_id || machineId;
+        machineCode = woRows[0].machine_code || machineId;
+        technicianId = woRows[0].technician_id || null;
+        alreadyInspected = !['DISPATCHED', 'IN_PROGRESS'].includes(woRows[0].status);
       }
     } catch (e) {
       // MySQL query fallback
+    }
+
+    // Idempotency guard: inspection (and the part reservation/procurement it
+    // triggers) must run exactly once per work order.
+    if (alreadyInspected) {
+      return {
+        success: true,
+        data: {
+          workOrderId: params.workOrderId,
+          status: 'ALREADY_INSPECTED',
+          technicianRootCause: params.technicianRootCause,
+          symptomsObserved: params.symptomsObserved,
+          requiredPartId: params.requiredPartId,
+          partReserved: true
+        }
+      };
     }
 
     // Record ROOT_CAUSE_CONFIRMED
@@ -202,7 +239,7 @@ export async function submitPhysicalInspection(params: PhysicalInspectionParams)
     let reserved = false;
 
     if (atp && atp.availableToPromise >= qty) {
-      // In stock -> Reserve immediately
+      // In stock -> Reserve immediately -> repair begins now.
       try {
         reserved = await reservePart(params.workOrderId, params.requiredPartId, qty, correlationId);
       } catch (e) {
@@ -220,10 +257,49 @@ export async function submitPhysicalInspection(params: PhysicalInspectionParams)
           actorId: 'PLANTOPS-INVENTORY',
           metadata: { partId: params.requiredPartId, quantity: qty, binLocation: atp?.binLocation || 'BAY-A-04' }
         });
+        await recordEvent({
+          incidentId,
+          workOrderId: params.workOrderId,
+          machineId,
+          eventType: 'REPAIR_STARTED',
+          actorType: 'TECHNICIAN',
+          actorId: params.technicianName,
+          metadata: { partId: params.requiredPartId }
+        });
+        await stampIncident(incidentId, 'repair_started_at');
+      } catch (e) {}
+
+      try {
+        await execute(`UPDATE work_orders SET technician_phase = 'REPAIRING' WHERE id = ?`, [params.workOrderId]);
+        await execute(
+          `UPDATE machines SET status = 'MAINTENANCE' WHERE (id = ? OR code = ?) AND status NOT IN ('VERIFYING', 'OFFLINE')`,
+          [machineId, machineId]
+        );
+        setMachineMemoryState(machineCode, 'MAINTENANCE');
+        broadcastTechnicianUpdate(technicianId, params.workOrderId, 'REPAIRING');
       } catch (e) {}
     } else {
-      // Out of stock -> Auto-trigger Procurement flow
+      // Out of stock -> machine and technician both wait; downtime keeps running,
+      // repair does not start until the part arrives (see notifyPartAvailable()).
       newStatus = 'PENDING_PARTS';
+      try {
+        await recordEvent({
+          incidentId,
+          workOrderId: params.workOrderId,
+          machineId,
+          eventType: 'WAITING_FOR_PART',
+          actorType: 'SYSTEM',
+          actorId: 'PLANTOPS-INVENTORY',
+          metadata: { partId: params.requiredPartId, quantity: qty }
+        });
+      } catch (e) {}
+      try {
+        await execute(`UPDATE work_orders SET technician_phase = 'WAITING_PARTS' WHERE id = ?`, [params.workOrderId]);
+        await execute(`UPDATE machines SET status = 'WAITING_PARTS' WHERE (id = ? OR code = ?)`, [machineId, machineId]);
+        setMachineMemoryState(machineCode, 'WAITING_PARTS');
+        broadcast('machine:status_changed', { machineId, status: 'WAITING_PARTS', reason: 'Required spare part not in stock. Repair paused pending procurement.' });
+        broadcastTechnicianUpdate(technicianId, params.workOrderId, 'WAITING_PARTS');
+      } catch (e) {}
       try {
         await processProcurement({
           incidentId,
@@ -486,14 +562,33 @@ export async function markTechnicianArrived(workOrderId: string, technicianName:
   try {
     let incidentId = 'INC-INIT-01';
     let machineId = 'MCH-CNC-01';
+    let machineCode = 'CNC-01';
+    let technicianId: string | null = null;
+    let alreadyArrived = false;
 
     try {
-      const woRows = await query<any>(`SELECT incident_id, machine_id, technician_id FROM work_orders WHERE id = ? LIMIT 1`, [workOrderId]);
+      const woRows = await query<any>(
+        `SELECT wo.incident_id, wo.machine_id, wo.technician_id, wo.technician_phase, i.technician_arrived_at, m.code as machine_code
+         FROM work_orders wo
+         LEFT JOIN incidents i ON i.id = wo.incident_id
+         JOIN machines m ON m.id = wo.machine_id
+         WHERE wo.id = ? LIMIT 1`,
+        [workOrderId]
+      );
       if (woRows && woRows.length > 0) {
         incidentId = woRows[0].incident_id || incidentId;
         machineId = woRows[0].machine_id || machineId;
+        machineCode = woRows[0].machine_code || machineId;
+        technicianId = woRows[0].technician_id || null;
+        alreadyArrived = Boolean(woRows[0].technician_arrived_at);
       }
     } catch (e) {}
+
+    // Idempotency guard: a repeated "Mark Arrived" click must not record a second
+    // TECHNICIAN_ARRIVED event or re-broadcast the transition.
+    if (alreadyArrived) {
+      return { success: true, message: `Technician ${technicianName} already marked arrived.` };
+    }
 
     // Record TECHNICIAN_ARRIVED
     try {
@@ -509,6 +604,21 @@ export async function markTechnicianArrived(workOrderId: string, technicianName:
       await stampIncident(incidentId, 'technician_arrived_at');
     } catch (e) {}
 
+    // The machine becomes physically unavailable for a different reason than
+    // "sensors read bad" the moment a technician is on-site working it — it is
+    // now under active maintenance, not merely faulted. FAULT stays reserved for
+    // "detected, nobody working it yet."
+    try {
+      await execute(
+        `UPDATE machines SET status = 'MAINTENANCE' WHERE (id = ? OR code = ?) AND status NOT IN ('WAITING_PARTS', 'VERIFYING', 'OFFLINE')`,
+        [machineId, machineId]
+      );
+      await execute(`UPDATE work_orders SET technician_phase = 'ARRIVED' WHERE id = ?`, [workOrderId]);
+      // Tell telemetry's in-memory evaluator to stop driving this machine's
+      // status until the repair workflow releases it — see Rule 2.
+      setMachineMemoryState(machineCode, 'MAINTENANCE');
+    } catch (e) {}
+
     try {
       await recordAuditLog({
         actor: technicianName,
@@ -521,6 +631,8 @@ export async function markTechnicianArrived(workOrderId: string, technicianName:
 
     try {
       broadcast('workorder:arrived', { workOrderId, technicianName, arrivedAt: new Date().toISOString() });
+      broadcast('machine:status_changed', { machineId, status: 'MAINTENANCE', reason: 'Technician arrived on-site and began physical maintenance.' });
+      broadcastTechnicianUpdate(technicianId, workOrderId, 'ARRIVED');
     } catch (e) {}
     return { success: true, message: `Technician ${technicianName} arrived on site.` };
   } catch (err: any) {
@@ -542,14 +654,43 @@ export async function applyLOTO(
   try {
     let incidentId = 'INC-INIT-01';
     let machineId = 'MCH-CNC-01';
+    let machineCode = 'CNC-01';
+    let technicianId: string | null = null;
+    let alreadyApplied = false;
+    let hasArrived = false;
 
     try {
-      const woRows = await query<any>(`SELECT incident_id, machine_id FROM work_orders WHERE id = ? LIMIT 1`, [workOrderId]);
+      const woRows = await query<any>(
+        `SELECT wo.incident_id, wo.machine_id, wo.technician_id, wo.loto_applied, i.technician_arrived_at, m.code as machine_code
+         FROM work_orders wo
+         LEFT JOIN incidents i ON i.id = wo.incident_id
+         JOIN machines m ON m.id = wo.machine_id
+         WHERE wo.id = ? LIMIT 1`,
+        [workOrderId]
+      );
       if (woRows && woRows.length > 0) {
         incidentId = woRows[0].incident_id || incidentId;
         machineId = woRows[0].machine_id || machineId;
+        machineCode = woRows[0].machine_code || machineId;
+        technicianId = woRows[0].technician_id || null;
+        alreadyApplied = Boolean(woRows[0].loto_applied);
+        hasArrived = Boolean(woRows[0].technician_arrived_at);
       }
     } catch (e) {}
+
+    // Idempotency guard: LOTO must be applied exactly once per work order.
+    if (alreadyApplied) {
+      return true;
+    }
+
+    // LOTO starts only after arrival. The 3D walker's visual "arrival" and the
+    // backend's technician_arrived_at are decoupled (arrival is a separate,
+    // optional button click) — rather than hard-block LOTO on a UI gap, treat
+    // reaching LOTO as implicit proof of arrival and record it now so the
+    // machine correctly becomes MAINTENANCE (not left on FAULT/RUNNING).
+    if (!hasArrived) {
+      await markTechnicianArrived(workOrderId, verifiedBy);
+    }
 
     // Record LOTO_STARTED
     try {
@@ -567,13 +708,22 @@ export async function applyLOTO(
         }
       });
       await stampIncident(incidentId, 'loto_started_at');
+      broadcastTechnicianUpdate(technicianId, workOrderId, 'LOTO');
     } catch (e) {}
 
     try {
       await execute(
-        `UPDATE work_orders SET loto_applied = TRUE, loto_verified_by = ?, started_at = NOW(), status = 'IN_PROGRESS' WHERE id = ?`,
+        `UPDATE work_orders SET loto_applied = TRUE, loto_verified_by = ?, started_at = NOW(), status = 'IN_PROGRESS', technician_phase = 'LOTO' WHERE id = ?`,
         [verifiedBy, workOrderId]
       );
+      // Safety net: the machine should already be MAINTENANCE from arrival, but
+      // guarantee it here too in case arrive/loto are ever called out of the
+      // expected order by a retried request.
+      await execute(
+        `UPDATE machines SET status = 'MAINTENANCE' WHERE (id = ? OR code = ?) AND status NOT IN ('WAITING_PARTS', 'VERIFYING', 'OFFLINE')`,
+        [machineId, machineId]
+      );
+      setMachineMemoryState(machineCode, 'MAINTENANCE');
     } catch (e) {}
 
     try {
@@ -616,6 +766,8 @@ export async function applyLOTO(
           actorId: verifiedBy,
         });
         await stampIncident(incidentId, 'inspection_started_at');
+        await execute(`UPDATE work_orders SET technician_phase = 'INSPECTING' WHERE id = ?`, [workOrderId]);
+        broadcastTechnicianUpdate(technicianId, workOrderId, 'INSPECTING');
       } catch (e) {}
 
     try {
@@ -644,33 +796,121 @@ export async function applyLOTO(
   }
 }
 
+/**
+ * Called once a previously-out-of-stock part has actually arrived (goods
+ * receipt confirmed). Resumes the paused repair: machine goes back to
+ * MAINTENANCE, technician goes back to REPAIRING, and repair_started_at is
+ * stamped now (this is genuinely when physical repair work restarts).
+ * No-ops if the work order isn't currently WAITING_PARTS, so a part that
+ * arrives after the technician already worked around it doesn't clobber state.
+ */
+export async function notifyPartAvailable(workOrderId: string, partId?: string) {
+  try {
+    const woRows = await query<any>(
+      `SELECT wo.incident_id, wo.machine_id, wo.technician_id, wo.technician_phase, i.repair_started_at, m.code as machine_code
+       FROM work_orders wo
+       LEFT JOIN incidents i ON i.id = wo.incident_id
+       JOIN machines m ON m.id = wo.machine_id
+       WHERE wo.id = ? LIMIT 1`,
+      [workOrderId]
+    );
+    if (!woRows || woRows.length === 0) return;
+    const wo = woRows[0];
+    if (wo.technician_phase !== 'WAITING_PARTS') return; // already resumed or never waited
+
+    const incidentId = wo.incident_id;
+    const machineId = wo.machine_id;
+    const machineCode = wo.machine_code || machineId;
+    const technicianId = wo.technician_id;
+
+    await recordEvent({
+      incidentId,
+      workOrderId,
+      machineId,
+      eventType: 'PART_AVAILABLE',
+      actorType: 'SYSTEM',
+      actorId: 'PLANTOPS-PROCUREMENT',
+      metadata: { partId: partId || null }
+    });
+    if (!wo.repair_started_at) {
+      await recordEvent({
+        incidentId,
+        workOrderId,
+        machineId,
+        eventType: 'REPAIR_STARTED',
+        actorType: 'TECHNICIAN',
+        actorId: technicianId || 'TECHNICIAN',
+        metadata: { partId: partId || null, resumedAfterPartsWait: true }
+      });
+      await stampIncident(incidentId, 'repair_started_at');
+    }
+
+    await execute(`UPDATE work_orders SET technician_phase = 'REPAIRING' WHERE id = ?`, [workOrderId]);
+    await execute(`UPDATE machines SET status = 'MAINTENANCE' WHERE (id = ? OR code = ?) AND status = 'WAITING_PARTS'`, [machineId, machineId]);
+    setMachineMemoryState(machineCode, 'MAINTENANCE');
+
+    broadcast('machine:status_changed', { machineId, status: 'MAINTENANCE', reason: 'Required part received. Repair resumed.' });
+    broadcastTechnicianUpdate(technicianId, workOrderId, 'REPAIRING');
+  } catch (err: any) {
+    console.error(`[MaintenanceService] notifyPartAvailable error: ${err.message}`);
+  }
+}
+
 export async function completeRepair(workOrderId: string, technicianName: string) {
   try {
     let incidentId = 'INC-INIT-01';
     let machineId = 'MCH-CNC-01';
+    let machineCode = 'CNC-01';
     let technicianId = 'TECH-01';
+    let alreadyVerifying = false;
 
     try {
-      const woRows = await query<any>(`SELECT * FROM work_orders WHERE id = ? LIMIT 1`, [workOrderId]);
+      const woRows = await query<any>(
+        `SELECT wo.*, m.code as machine_code FROM work_orders wo JOIN machines m ON wo.machine_id = m.id WHERE wo.id = ? LIMIT 1`,
+        [workOrderId]
+      );
       if (woRows && woRows.length > 0) {
         incidentId = woRows[0].incident_id || incidentId;
         machineId = woRows[0].machine_id || machineId;
+        machineCode = woRows[0].machine_code || machineId;
         technicianId = woRows[0].technician_id || technicianId;
+        alreadyVerifying = woRows[0].status === 'VERIFYING' || woRows[0].status === 'COMPLETED';
       }
     } catch (e) {}
 
-    // Mark WO as VERIFYING in DB if possible
+    // Idempotency guard: a repeated "Complete Repair" click must not re-fire
+    // REPAIR_COMPLETED/VERIFICATION_STARTED or reset the verification tracker.
+    if (alreadyVerifying) {
+      return true;
+    }
+
+    // Record REPAIR_COMPLETED and VERIFICATION_STARTED — these were previously
+    // never stamped, so downtime breakdown had no repair/verification duration.
+    try {
+      await recordEvent({ incidentId, workOrderId, machineId, eventType: 'REPAIR_COMPLETED', actorType: 'TECHNICIAN', actorId: technicianName });
+      await stampIncident(incidentId, 'repair_completed_at');
+      await recordEvent({ incidentId, workOrderId, machineId, eventType: 'VERIFICATION_STARTED', actorType: 'VERIFICATION_ENGINE', actorId: 'PLANTOPS-VERIFICATION' });
+      await stampIncident(incidentId, 'verification_started_at');
+    } catch (e) {}
+
+    // Mark WO/incident/machine as VERIFYING. The technician stays BUSY/VERIFYING —
+    // NOT freed up yet — because repair completion is not the same as the machine
+    // being confirmed healthy. Freed on success in verification.service.ts.
     try {
       await execute(
-        `UPDATE work_orders SET status = 'VERIFYING', completed_at = NOW() WHERE id = ?`,
+        `UPDATE work_orders SET status = 'VERIFYING', completed_at = NOW(), technician_phase = 'VERIFYING' WHERE id = ?`,
         [workOrderId]
       );
       await execute(`UPDATE incidents SET status = 'VERIFYING' WHERE id = ?`, [incidentId]);
       await execute(`UPDATE machines SET status = 'VERIFYING' WHERE id = ?`, [machineId]);
-      if (technicianId) {
-        await execute(`UPDATE technicians SET status = 'AVAILABLE', active_work_orders = GREATEST(0, active_work_orders - 1) WHERE id = ?`, [technicianId]);
-      }
     } catch (e) {}
+
+    // Critical fix: without this, telemetry's in-memory state machine never
+    // learns the machine entered VERIFYING (it only ever writes RUNNING/
+    // WARNING/FAULT itself), so post-heal telemetry ticks would never be routed
+    // into processVerificationReading() and the whole 3-clean-cycle check,
+    // downtime computation, and work-order completion would silently never run.
+    setMachineMemoryState(machineCode, 'VERIFYING');
 
     try {
       await recordAuditLog({
@@ -689,6 +929,7 @@ export async function completeRepair(workOrderId: string, technicianName: string
         reason: 'Technician completed physical repair. Live sensor verification in progress.'
       });
       broadcast('workorder:completed', { workOrderId, status: 'VERIFYING' });
+      broadcastTechnicianUpdate(technicianId, workOrderId, 'VERIFYING');
     } catch (e) {}
 
     return true;

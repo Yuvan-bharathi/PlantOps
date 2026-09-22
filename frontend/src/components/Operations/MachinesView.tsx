@@ -39,6 +39,8 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
         return 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse';
       case 'MAINTENANCE':
         return 'bg-blue-50 text-blue-700 border-blue-200';
+      case 'WAITING_PARTS':
+        return 'bg-orange-50 text-orange-700 border-orange-200';
       case 'VERIFYING':
         return 'bg-purple-50 text-purple-700 border-purple-200 animate-pulse';
       default:

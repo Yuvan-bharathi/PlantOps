@@ -6,7 +6,10 @@ import {
   HardHat, MapPin, UserCheck, AlertOctagon, Check, Plus, Zap, Gauge, QrCode, Send, PlayCircle,
   Shield, AlertTriangle, ArrowRight, CheckSquare, Sparkles, SlidersHorizontal, ArrowLeft
 } from 'lucide-react';
-import { FactoryCanvas, LayerConfig, CameraPresetType } from '../components/DigitalTwin/FactoryCanvas';
+import { FactoryCanvas, LayerConfig, CameraPresetType, ZONE_DEFS, ViewLevel } from '../components/DigitalTwin/FactoryCanvas';
+import { Breadcrumb } from '../components/DigitalTwin/Breadcrumb';
+import { CompassOverlay } from '../components/DigitalTwin/CompassOverlay';
+import { ZoneId, zoneIdForMachineCode } from '../components/DigitalTwin/zoneData';
 import { Machine, TelemetryData, Incident, WorkOrder } from '../types';
 import { api } from '../services/api';
 
@@ -237,7 +240,13 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   const [tab, setTab] = useState<'live' | 'simulate' | 'ai' | 'wo' | 'timeline'>('live');
   const [applyingLoto, setApplyingLoto] = useState(false);
   const [submittingInspection, setSubmittingInspection] = useState(false);
-  const [inspectionSubmitted, setInspectionSubmitted] = useState(false);
+  // Reconstruct from the backend-authoritative work order instead of always
+  // starting false — otherwise reopening this panel on an INSPECTING-or-later
+  // work order would hide the already-submitted inspection and show the
+  // inspection form again.
+  const [inspectionSubmitted, setInspectionSubmitted] = useState(
+    Boolean(workOrder && ['WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED'].includes(workOrder.technician_phase || ''))
+  );
   const [completing, setCompleting] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [healing, setHealing] = useState(false);
@@ -960,10 +969,25 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
   const woId = workOrder?.id || `WO-1082`;
   const techSignName = workOrder?.technician_name || 'Frank Moore (Maintenance Specialist)';
 
+  // The backend work order (technician_phase, loto_applied) is authoritative —
+  // reconstruct the wizard's step from it instead of always starting at Phase
+  // 1. Without this, closing and reopening the workstation (or navigating away
+  // and back) silently reset an in-progress INSPECTING/REPAIRING work order
+  // back to "Phase 1 — LOTO" in the UI even though the backend, the 3D label,
+  // and the Dashboard all correctly still show the real in-progress state.
+  const ARRIVED_OR_LATER = new Set(['ARRIVED', 'LOTO', 'INSPECTING', 'WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED']);
+  const LOTO_DONE_OR_LATER = new Set(['INSPECTING', 'WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED']);
+  const INSPECTION_DONE_OR_LATER = new Set(['WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED']);
+  const phase = workOrder?.technician_phase || '';
+  const initialHasArrived = Boolean(workOrder?.loto_applied) || ARRIVED_OR_LATER.has(phase);
+  const initialLotoApplied = Boolean(workOrder?.loto_applied) || LOTO_DONE_OR_LATER.has(phase);
+  const initialInspectionSubmitted = INSPECTION_DONE_OR_LATER.has(phase);
+  const initialActivePhase: 1 | 2 | 3 | 4 = initialInspectionSubmitted ? 3 : initialLotoApplied ? 2 : 1;
+
   // Stepper State
-  const [activePhase, setActivePhase] = useState<1 | 2 | 3 | 4>(1);
+  const [activePhase, setActivePhase] = useState<1 | 2 | 3 | 4>(initialActivePhase);
   const [arrivingOnSite, setArrivingOnSite] = useState(false);
-  const [hasArrived, setHasArrived] = useState(false);
+  const [hasArrived, setHasArrived] = useState(initialHasArrived);
 
   // Phase 4: AI SOP Assistant & RAG Knowledge Base
   const [sopQuestion, setSopQuestion] = useState('');
@@ -1001,7 +1025,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
   const [voltageReading, setVoltageReading] = useState('0.0');
   const [pressureReading, setPressureReading] = useState('0.0');
   const [executingLoto, setExecutingLoto] = useState(false);
-  const [lotoApplied, setLotoApplied] = useState(workOrder?.loto_applied || false);
+  const [lotoApplied, setLotoApplied] = useState(initialLotoApplied);
 
   // Phase 2: Inspection & ATP
   const availableSymptoms = [
@@ -1019,7 +1043,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
   const [scanningPart, setScanningPart] = useState(false);
   const [partScanned, setPartScanned] = useState(false);
   const [submittingInspection, setSubmittingInspection] = useState(false);
-  const [inspectionSubmitted, setInspectionSubmitted] = useState(false);
+  const [inspectionSubmitted, setInspectionSubmitted] = useState(initialInspectionSubmitted);
 
   // Phase 3: Repair & Verification
   const [completingRepair, setCompletingRepair] = useState(false);
@@ -1803,10 +1827,14 @@ const FactoryMinimap: React.FC<{
   machines: Machine[];
   selectedMachine: Machine | null;
   onSelect: (m: Machine) => void;
-}> = ({ machines, selectedMachine, onSelect }) => {
+  selectedZoneId?: ZoneId | null;
+  onSelectZone?: (zoneId: ZoneId) => void;
+  dispatchedTarget?: string | null;
+  viewLevel?: ViewLevel;
+}> = ({ machines, selectedMachine, onSelect, selectedZoneId = null, onSelectZone, dispatchedTarget = null, viewLevel = 'PLANT' }) => {
   const [collapsed, setCollapsed] = useState(false);
 
-  const dots = [
+  const allDots = [
     // Machining (top-left zone ~8–30% x, 15–45% y)
     { code: 'CNC-01',   x: 8,  y: 20 }, { code: 'CNC-02', x: 14, y: 20 }, { code: 'CNC-03', x: 20, y: 20 },
     { code: 'CNC-04',   x: 8,  y: 35 }, { code: 'CNC-05', x: 14, y: 35 }, { code: 'CNC-06', x: 20, y: 35 },
@@ -1824,6 +1852,12 @@ const FactoryMinimap: React.FC<{
     // Maintenance (bottom-right ~65–92%)
     { code: 'BENCH-01', x: 64, y: 62 }, { code: 'BENCH-02', x: 76, y: 62 }, { code: 'TEST-01', x: 70, y: 78 },
   ];
+
+  // Inside a building, the minimap shows only that building's machines —
+  // it should not read as if the other interiors were part of it.
+  const dots = viewLevel === 'INTERIOR' && selectedZoneId
+    ? allDots.filter((d) => zoneIdForMachineCode(d.code) === selectedZoneId)
+    : allDots;
 
   const machineByCode = useMemo(() => {
     const map: Record<string, Machine> = {};
@@ -1858,21 +1892,27 @@ const FactoryMinimap: React.FC<{
         {/* Zone borders (2 rows × 3 cols) */}
         <div className="absolute inset-0 grid grid-cols-3 grid-rows-2">
           {[
-            { label: 'MACH', color: '#D97706' },
-            { label: 'ROBOT', color: '#2563EB' },
-            { label: 'PROC', color: '#059669' },
-            { label: 'ASMB', color: '#EA580C' },
-            { label: 'PACK', color: '#CA8A04' },
-            { label: 'MAINT', color: '#7C3AED' },
-          ].map((z, i) => (
-            <div
-              key={i}
-              className="border border-[#DDD9D0]/60 flex items-start justify-start p-0.5"
-              style={{ background: `${z.color}08` }}
-            >
-              <span className="text-[7px] font-extrabold" style={{ color: z.color }}>{z.label}</span>
-            </div>
-          ))}
+            { id: 'MACHINING' as ZoneId, label: 'MACH', color: '#D97706' },
+            { id: 'ROBOT' as ZoneId, label: 'ROBOT', color: '#2563EB' },
+            { id: 'PROCESSING' as ZoneId, label: 'PROC', color: '#059669' },
+            { id: 'ASSEMBLY' as ZoneId, label: 'ASMB', color: '#EA580C' },
+            { id: 'PACKAGING' as ZoneId, label: 'PACK', color: '#CA8A04' },
+            { id: 'MAINTENANCE' as ZoneId, label: 'MAINT', color: '#7C3AED' },
+          ].map((z, i) => {
+            const isActiveZone = selectedZoneId === z.id;
+            return (
+              <button
+                key={i}
+                onClick={() => onSelectZone?.(z.id)}
+                className={`border flex items-start justify-start p-0.5 transition-all ${
+                  isActiveZone ? 'border-[#2563EB]' : 'border-[#DDD9D0]/60'
+                }`}
+                style={{ background: isActiveZone ? `${z.color}22` : `${z.color}08` }}
+              >
+                <span className="text-[7px] font-extrabold" style={{ color: z.color }}>{z.label}</span>
+              </button>
+            );
+          })}
         </div>
         {/* Machine dots */}
         {dots.map((d) => {
@@ -1880,16 +1920,21 @@ const FactoryMinimap: React.FC<{
           const status = m?.status || 'RUNNING';
           const color = S_COLORS[status] || S_COLORS.RUNNING;
           const isSelected = selectedMachine?.code === d.code;
+          const isDispatchTarget = dispatchedTarget === d.code;
           return (
             <button
               key={d.code}
               onClick={() => onSelect(m || ({ id: d.code, code: d.code, name: d.code, status } as any))}
-              title={`${d.code} (${status})`}
+              title={`${d.code} (${status})${isDispatchTarget ? ' — Technician en route' : ''}`}
               className={`absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 transition-all ${
                 isSelected ? 'ring-2 ring-blue-600 scale-125 z-10' : 'hover:scale-110'
               }`}
               style={{ left: `${d.x}%`, top: `${d.y}%`, backgroundColor: color, boxShadow: `0 0 4px ${color}80` }}
-            />
+            >
+              {isDispatchTarget && (
+                <span className="absolute inset-[-3px] rounded-full border-2 border-[#2563EB] animate-ping" />
+              )}
+            </button>
           );
         })}
       </div>
@@ -1920,6 +1965,10 @@ const LayersPanel: React.FC<{
         { k: 'safetyZones',  label: 'Safety Zones & Floors' },
         { k: 'walkways',     label: 'Pedestrian Walkways' },
         { k: 'liveSensors',  label: 'Selected Sensor HUD' },
+        { k: 'buildings',    label: 'Section Buildings' },
+        { k: 'roads',        label: 'Campus Roads' },
+        { k: 'trees',        label: 'Trees & Landscaping' },
+        { k: 'vehicles',     label: 'Vehicles & Parking' },
       ].map((item) => (
         <label key={item.k} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl hover:bg-[#EAE7E0] cursor-pointer">
           <input
@@ -1970,25 +2019,57 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
     safetyZones: true,
     walkways: true,
     liveSensors: true,
+    buildings: true,
+    roads: true,
+    trees: true,
+    vehicles: true,
   });
 
   const [showLayers, setShowLayers] = useState(false);
   const [cameraPreset, setCameraPreset] = useState<CameraPresetType>('OVERVIEW');
+  const [viewLevel, setViewLevel] = useState<ViewLevel>('PLANT');
   const [resetTrigger, setResetTrigger] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [dispatchedTarget, setDispatchedTarget] = useState<string | null>(null);
 
   const [activePanel, setActivePanel] = useState<'MACHINE' | 'WORKSTATION'>('MACHINE');
 
+  // ── Shared navigation "source of truth" — tabs, 3D buildings, supervisor
+  // labels, minimap and search all drive the camera/viewLevel through these.
+  // Two levels only: Plant Overview, or directly inside a building. ──
+  const exitBuilding = () => {
+    setCameraPreset('OVERVIEW');
+    setViewLevel('PLANT');
+    setResetTrigger((v) => v + 1);
+    onSelectMachine(null);
+  };
+
+  const enterBuilding = (zoneId: CameraPresetType) => {
+    setCameraPreset(zoneId);
+    setViewLevel('INTERIOR');
+    onSelectMachine(null);
+  };
+
+  // Jumps the camera to a machine's zone (if not already there) and commits
+  // to Interior level — used whenever a machine is selected by any path
+  // (3D click, minimap, search) so the drill-down flow stays consistent.
+  const activateMachine = (m: Machine) => {
+    const zoneId = zoneIdForMachineCode(m.code);
+    if (zoneId && cameraPreset !== zoneId) setCameraPreset(zoneId);
+    setViewLevel('INTERIOR');
+  };
+
   const handleSelectTechnician = (code: string) => {
     const target = machines.find((m) => m.code === code) || (selectedMachine?.code === code ? selectedMachine : machines[0]);
     if (target) {
+      activateMachine(target);
       onSelectMachine(target);
       setActivePanel('WORKSTATION');
     }
   };
 
   const handleSelectMachine = (m: Machine | null) => {
+    if (m) activateMachine(m);
     onSelectMachine(m);
     setActivePanel('MACHINE');
   };
@@ -2027,7 +2108,7 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
       <div className="h-14 bg-[#FAF9F6] border-b border-[#DDD9D0] flex items-center px-5 gap-3 shadow-sm z-10 flex-shrink-0">
         {/* Floor Label */}
         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-[#DDD9D0] text-xs font-bold text-[#1E293B]">
-          <LayoutGrid size={13} className="text-[#2563EB]" /> Floor 1 — Main Plant
+          <LayoutGrid size={13} className="text-[#2563EB]" /> Main Plant
         </div>
 
         {/* Camera Presets */}
@@ -2044,8 +2125,8 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
             <button
               key={preset.id}
               onClick={() => {
-                setCameraPreset(preset.id as CameraPresetType);
-                handleSelectMachine(null);
+                if (preset.id === 'OVERVIEW') exitBuilding();
+                else enterBuilding(preset.id as CameraPresetType);
               }}
               className={`px-2 py-1 text-[11px] font-bold rounded-lg transition-all ${
                 cameraPreset === preset.id && !selectedMachine
@@ -2130,15 +2211,20 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
           layers={layers}
           resetTrigger={resetTrigger}
           cameraPreset={cameraPreset}
+          onPresetChange={enterBuilding}
           liveTelemetry={mergedTelemetry}
           dispatchedTarget={dispatchedTarget}
+          viewLevel={viewLevel}
         />
 
-        {/* Top-Left Live Status Badge */}
-        <div className="absolute top-3 left-3 flex items-center gap-2 bg-white/95 backdrop-blur-md border border-[#DDD9D0] rounded-xl px-3 py-1.5 shadow-sm">
-          <span className="w-2 h-2 rounded-full bg-[#22A06B] animate-pulse" />
-          <span className="text-xs font-bold text-[#1E293B] font-mono tracking-wide">3D INDUSTRIAL DIGITAL TWIN</span>
-        </div>
+        {/* Top-Left Breadcrumb (Plant Overview > Building) + Exit Building */}
+        <Breadcrumb
+          viewLevel={viewLevel}
+          zoneLabel={cameraPreset !== 'OVERVIEW' ? ZONE_DEFS.find((z) => z.id === cameraPreset)?.label ?? null : null}
+          onExitBuilding={exitBuilding}
+        />
+
+        <CompassOverlay />
 
         {/* Top-Right Asset Counts */}
         <div className={`absolute top-3 ${selectedMachine ? 'right-96' : 'right-3'} transition-all duration-200 flex items-center gap-2.5 bg-white/95 backdrop-blur-md border border-[#DDD9D0] rounded-xl px-3 py-1.5 shadow-sm text-xs`}>
@@ -2157,6 +2243,10 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
           machines={machines}
           selectedMachine={selectedMachine}
           onSelect={(m) => handleSelectMachine(m)}
+          selectedZoneId={cameraPreset !== 'OVERVIEW' ? (cameraPreset as ZoneId) : null}
+          onSelectZone={(zoneId) => enterBuilding(zoneId)}
+          dispatchedTarget={dispatchedTarget}
+          viewLevel={viewLevel}
         />
 
         {/* Bottom-Right Legend */}
@@ -2197,10 +2287,7 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
             workOrder={currentWO}
             onClose={() => handleSelectMachine(null)}
             onRefresh={onRefresh}
-            onFitFactory={() => {
-              setCameraPreset('OVERVIEW');
-              setResetTrigger((v) => v + 1);
-            }}
+            onFitFactory={exitBuilding}
             onDispatchTechnician={setDispatchedTarget}
             onOpenWorkstation={() => setActivePanel('WORKSTATION')}
           />

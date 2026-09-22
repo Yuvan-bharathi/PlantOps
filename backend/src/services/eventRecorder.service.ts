@@ -28,8 +28,11 @@ export type IncidentEventType =
   | 'PART_ALLOCATED'
   | 'REPAIR_STARTED'
   | 'REPAIR_COMPLETED'
+  | 'WAITING_FOR_PART'
+  | 'PART_AVAILABLE'
   | 'VERIFICATION_STARTED'
   | 'VERIFICATION_PASSED'
+  | 'VERIFICATION_FAILED'
   | 'MACHINE_RUNNING'
   | 'INCIDENT_RESOLVED';
 
@@ -146,4 +149,50 @@ export async function computeAndSaveDowntime(incidentId: string): Promise<number
     console.warn(`[EventRecorder] computeAndSaveDowntime failed: ${err.message}`);
     return null;
   }
+}
+
+export interface DowntimeBreakdown {
+  response_time_seconds: number | null;
+  travel_time_seconds: number | null;
+  loto_time_seconds: number | null;
+  inspection_time_seconds: number | null;
+  parts_wait_time_seconds: number | null;
+  repair_time_seconds: number | null;
+  verification_time_seconds: number | null;
+  total_downtime_seconds: number | null;
+}
+
+/**
+ * Computes a per-phase downtime breakdown from the incidents table's own
+ * server-stamped timestamp columns. Every duration here is derived from
+ * authoritative DB timestamps, never from Date.now().
+ */
+export async function getDowntimeBreakdown(incidentId: string): Promise<DowntimeBreakdown | null> {
+  const rows = await query<any>(
+    `SELECT detected_at, assigned_at, technician_dispatched_at, technician_arrived_at,
+            loto_started_at, loto_completed_at, inspection_started_at, inspection_completed_at,
+            repair_started_at, repair_completed_at, verification_started_at, verification_completed_at,
+            machine_running_at, downtime_seconds
+     FROM incidents WHERE id = ? LIMIT 1`,
+    [incidentId]
+  );
+  const inc = rows[0];
+  if (!inc) return null;
+
+  const diffSeconds = (a: string | null, b: string | null): number | null => {
+    if (!a || !b) return null;
+    const ms = new Date(b).getTime() - new Date(a).getTime();
+    return Number.isFinite(ms) ? Math.max(0, ms / 1000) : null;
+  };
+
+  return {
+    response_time_seconds: diffSeconds(inc.detected_at, inc.assigned_at),
+    travel_time_seconds: diffSeconds(inc.technician_dispatched_at, inc.technician_arrived_at),
+    loto_time_seconds: diffSeconds(inc.loto_started_at, inc.loto_completed_at),
+    inspection_time_seconds: diffSeconds(inc.inspection_started_at, inc.inspection_completed_at),
+    parts_wait_time_seconds: diffSeconds(inc.inspection_completed_at, inc.repair_started_at),
+    repair_time_seconds: diffSeconds(inc.repair_started_at, inc.repair_completed_at),
+    verification_time_seconds: diffSeconds(inc.verification_started_at, inc.verification_completed_at || inc.machine_running_at),
+    total_downtime_seconds: inc.downtime_seconds ?? diffSeconds(inc.detected_at, inc.machine_running_at),
+  };
 }

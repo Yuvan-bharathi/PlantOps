@@ -4,6 +4,7 @@ import { evaluateProcurementPolicy } from './policyEngine.service.js';
 import { recordAuditLog } from './audit.service.js';
 import { broadcast } from './socket.service.js';
 import { receiveGoodsReceipt } from './inventory.service.js';
+import { notifyPartAvailable } from './maintenance.service.js';
 
 export interface CreatePORequest {
   incidentId?: string;
@@ -144,6 +145,9 @@ export async function processProcurement(req: CreatePORequest) {
           await execute(`UPDATE purchase_orders SET status = 'RECEIVED', received_at = NOW() WHERE id = ?`, [poId]);
           await receiveGoodsReceipt(poId, item.partId, quantity, 'AI_PROCUREMENT_AGENT', correlationId);
           broadcast('po:received', { poId, partId: item.partId, quantity });
+          if (req.workOrderId) {
+            await notifyPartAvailable(req.workOrderId, item.partId);
+          }
           console.log(`[ProcurementService] Simulated delivery & Goods Receipt (GRN) received for PO ${poId}`);
         } catch (err: any) {
           console.error(`[ProcurementService] Error processing mock goods receipt: ${err.message}`);
@@ -181,6 +185,9 @@ export async function approveHumanReviewItem(reviewId: string, reviewer: string,
           await execute(`UPDATE purchase_orders SET status = 'RECEIVED', received_at = NOW() WHERE id = ?`, [poId]);
           await receiveGoodsReceipt(poId, po.part_id, po.quantity, reviewer);
           broadcast('po:received', { poId, partId: po.part_id, quantity: po.quantity });
+          if (po.work_order_id) {
+            await notifyPartAvailable(po.work_order_id, po.part_id);
+          }
         }, 4000);
       }
     }

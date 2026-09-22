@@ -74,7 +74,7 @@ export async function runDatabaseMigrations(): Promise<void> {
 
     for (const col of columnsToAdd) {
       const existing = await query<{ cnt: number }>(`
-        SELECT COUNT(*) as cnt FROM information_schema.COLUMNS 
+        SELECT COUNT(*) as cnt FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'incidents' AND COLUMN_NAME = ?
       `, [col.name]);
 
@@ -83,6 +83,87 @@ export async function runDatabaseMigrations(): Promise<void> {
         console.log(`[MySQL Migration] Added column \`${col.name}\` to incidents`);
       }
     }
+
+    // 3. Machine runtime/downtime tracking columns
+    const machineColumnsToAdd = [
+      { name: 'last_running_started_at', type: 'DATETIME(3) NULL' },
+      { name: 'total_runtime_seconds', type: 'DOUBLE NOT NULL DEFAULT 0' },
+      { name: 'downtime_started_at', type: 'DATETIME(3) NULL' },
+    ];
+    for (const col of machineColumnsToAdd) {
+      const existing = await query<{ cnt: number }>(`
+        SELECT COUNT(*) as cnt FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'machines' AND COLUMN_NAME = ?
+      `, [col.name]);
+      if (existing[0]?.cnt === 0) {
+        await execute(`ALTER TABLE machines ADD COLUMN \`${col.name}\` ${col.type}`);
+        console.log(`[MySQL Migration] Added column \`${col.name}\` to machines`);
+      }
+    }
+    // Backfill: machines already RUNNING with no runtime clock started yet begin accruing now.
+    await execute(
+      `UPDATE machines SET last_running_started_at = CURRENT_TIMESTAMP(3) WHERE status = 'RUNNING' AND last_running_started_at IS NULL`
+    );
+
+    // 3b. `machine_components` / `sensor_thresholds` are queried by
+    // GET /machines and GET /machines/:codeOrId but were never created by any
+    // schema script. Every call to those routes has therefore always thrown
+    // and silently fallen back to the hardcoded MOCK_MACHINES array (static,
+    // always RUNNING) — this is why status changes made by the maintenance
+    // lifecycle kept appearing to "revert to RUNNING" after any refreshAll().
+    await execute(`
+      CREATE TABLE IF NOT EXISTS machine_components (
+        id              VARCHAR(50) NOT NULL PRIMARY KEY,
+        machine_id      VARCHAR(50) NOT NULL,
+        name            VARCHAR(150) NOT NULL,
+        component_type  VARCHAR(50) NOT NULL DEFAULT 'GENERIC',
+        criticality     ENUM('CRITICAL','HIGH','MEDIUM','LOW') NOT NULL DEFAULT 'MEDIUM',
+        created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_mc_machine (machine_id),
+        FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    await execute(`
+      CREATE TABLE IF NOT EXISTS sensor_thresholds (
+        id                VARCHAR(50) NOT NULL PRIMARY KEY,
+        machine_id        VARCHAR(50) NOT NULL,
+        sensor_type       VARCHAR(50) NOT NULL,
+        warning_threshold FLOAT NULL,
+        fault_threshold   FLOAT NULL,
+        unit              VARCHAR(20) NULL,
+        INDEX idx_st_machine (machine_id),
+        FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    // inventory.service.ts's reservePart() has always depended on this table;
+    // without it every inspection-phase part reservation silently failed
+    // (caught by the route's broad try/catch), so ATP inventory counts never
+    // actually reflected reserved parts.
+    await execute(`
+      CREATE TABLE IF NOT EXISTS part_reservations (
+        id             VARCHAR(50) NOT NULL PRIMARY KEY,
+        work_order_id  VARCHAR(50) NOT NULL,
+        part_id        VARCHAR(50) NOT NULL,
+        quantity       INT NOT NULL DEFAULT 1,
+        status         ENUM('RESERVED','CONSUMED','RELEASED') NOT NULL DEFAULT 'RESERVED',
+        created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_pr_wo (work_order_id),
+        INDEX idx_pr_part (part_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 4. Technician lifecycle phase column on work_orders (independent of the coarse
+    // technicians.status enum — tracks exactly where the assigned technician is in
+    // the maintenance workflow for this specific work order).
+    const woExisting = await query<{ cnt: number }>(`
+      SELECT COUNT(*) as cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_orders' AND COLUMN_NAME = 'technician_phase'
+    `);
+    if (woExisting[0]?.cnt === 0) {
+      await execute(`ALTER TABLE work_orders ADD COLUMN \`technician_phase\` VARCHAR(20) NOT NULL DEFAULT 'ASSIGNED'`);
+      console.log('[MySQL Migration] Added column `technician_phase` to work_orders');
+    }
+
     console.log('[MySQL Migration] Schema migrations up to date.');
   } catch (err: any) {
     console.warn(`[MySQL Migration] Migration check failed: ${err.message}`);

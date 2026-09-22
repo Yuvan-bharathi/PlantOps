@@ -3,6 +3,8 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
 import { Machine, TelemetryData } from '../../types';
+import { SectionBuildingShell } from './SectionBuildingShell';
+import { ZoneId, getZoneStatusCounts, zoneIdForMachineCode } from './zoneData';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types & Interfaces
@@ -16,6 +18,10 @@ export type LayerConfig = {
   safetyZones: boolean;
   walkways: boolean;
   liveSensors: boolean;
+  buildings: boolean;
+  roads: boolean;
+  trees: boolean;
+  vehicles: boolean;
 };
 
 export type CameraPresetType =
@@ -26,6 +32,8 @@ export type CameraPresetType =
   | 'ASSEMBLY'
   | 'PACKAGING'
   | 'MAINTENANCE';
+
+export type ViewLevel = 'PLANT' | 'INTERIOR';
 
 interface FactoryCanvasProps {
   machines: Machine[];
@@ -38,6 +46,7 @@ interface FactoryCanvasProps {
   onPresetChange?: (p: CameraPresetType) => void;
   liveTelemetry?: Record<string, TelemetryData>;
   dispatchedTarget?: string | null;
+  viewLevel?: ViewLevel;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,52 +63,52 @@ const S_COLOR: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6-Zone Machine Coordinates  (FW=84, FD=56)
-// Row 0 (z ≈ -17): Machining | Robot | Processing
-// Row 1 (z ≈ +10): Assembly  | Packaging | Maintenance
+// 6-Zone Machine Coordinates  (FW=110, FD=72) — buildings physically separated
+// by road-width gaps; Row 0 (z ≈ -20): Machining | Robot | Processing
+// Row 1 (z ≈ +15): Assembly  | Packaging | Maintenance
 // ─────────────────────────────────────────────────────────────────────────────
 const MACHINE_COORDS: Record<string, [number, number, number]> = {
-  // ── MACHINING CELL (center x≈-26, z≈-17) ──
-  'CNC-01': [-34, 0, -20],
-  'CNC-02': [-27, 0, -20],
-  'CNC-03': [-20, 0, -20],
-  'CNC-04': [-34, 0, -11],
-  'CNC-05': [-27, 0, -11],
-  'CNC-06': [-20, 0, -11],
-  // ── ROBOT CELL (center x≈0, z≈-17) ──
-  'ROBOT-01': [-5,  0, -21],
-  'ROBOT-02': [ 5,  0, -21],
-  'ROBOT-03': [-5,  0, -11],
-  'ROBOT-04': [ 5,  0, -11],
-  // ── PROCESSING CELL (center x≈+25, z≈-17) — 3-col x 2-row grid ──
-  'MIXER-01':   [17, 0, -20],
-  'PUMP-01':    [25, 0, -20],
-  'PRESS-01':   [33, 0, -20],
-  'PROCESS-01': [17, 0, -10],
-  'PROCESS-02': [25, 0, -10],
-  // ── ASSEMBLY CELL (center x≈-27, z≈+10) — 2x2 grid, spread to fill zone ──
-  'ASMB-01': [-32, 0,  5],
-  'ASMB-02': [-22, 0,  5],
-  'ASMB-03': [-32, 0, 15],
-  'ASMB-04': [-22, 0, 15],
-  // ── PACKAGING CELL (center x≈0, z≈+10) — 2 up, 1 centered below ──
-  'PACK-01': [-5, 0,  6],
-  'PACK-02': [ 5, 0,  6],
-  'PACK-03': [ 0, 0, 16],
-  // ── MAINTENANCE BAY (center x≈+23, z≈+10) — 2 up, 1 centered below ──
-  'BENCH-01': [17, 0,  7],
-  'BENCH-02': [29, 0,  7],
-  'TEST-01':  [23, 0, 17],
+  // ── MACHINING CELL (center x≈-35, z≈-20.5) ──
+  'CNC-01': [-42, 0, -25],
+  'CNC-02': [-35, 0, -25],
+  'CNC-03': [-28, 0, -25],
+  'CNC-04': [-42, 0, -16],
+  'CNC-05': [-35, 0, -16],
+  'CNC-06': [-28, 0, -16],
+  // ── ROBOT CELL (center x≈0, z≈-21) ──
+  'ROBOT-01': [-5,  0, -26],
+  'ROBOT-02': [ 5,  0, -26],
+  'ROBOT-03': [-5,  0, -16],
+  'ROBOT-04': [ 5,  0, -16],
+  // ── PROCESSING CELL (center x≈+33, z≈-20.5) — 3-col x 2-row grid ──
+  'MIXER-01':   [25, 0, -25],
+  'PUMP-01':    [33, 0, -25],
+  'PRESS-01':   [41, 0, -25],
+  'PROCESS-01': [25, 0, -15],
+  'PROCESS-02': [33, 0, -15],
+  // ── ASSEMBLY CELL (center x≈-35, z≈15) — 2x2 grid, spread to fill zone ──
+  'ASMB-01': [-40, 0, 10],
+  'ASMB-02': [-30, 0, 10],
+  'ASMB-03': [-40, 0, 20],
+  'ASMB-04': [-30, 0, 20],
+  // ── PACKAGING CELL (center x≈0, z≈+15.5) — 2 up, 1 centered below ──
+  'PACK-01': [-5, 0, 11],
+  'PACK-02': [ 5, 0, 11],
+  'PACK-03': [ 0, 0, 21],
+  // ── MAINTENANCE BAY (center x≈+31, z≈+16) — 2 up, 1 centered below ──
+  'BENCH-01': [25, 0, 12],
+  'BENCH-02': [37, 0, 12],
+  'TEST-01':  [31, 0, 22],
 };
 
 // Zone definitions for boundaries and supervisor labels
-const ZONE_DEFS = [
+export const ZONE_DEFS = [
   {
     id: 'MACHINING',
     label: 'MACHINING CELL',
     supervisor: 'Arun Kumar',
     machines: 6,
-    cx: -27, cz: -15.5, hw: 13, hd: 10.5,
+    cx: -35, cz: -20.5, hw: 13, hd: 10.5,
     floorColor: '#FAF5EE',
     badgeColor: '#D97706',
   },
@@ -108,7 +117,7 @@ const ZONE_DEFS = [
     label: 'ROBOT CELL',
     supervisor: 'Priya Nair',
     machines: 4,
-    cx: 0, cz: -16, hw: 10, hd: 10.5,
+    cx: 0, cz: -21, hw: 10, hd: 10.5,
     floorColor: '#EFF6FF',
     badgeColor: '#2563EB',
   },
@@ -117,7 +126,7 @@ const ZONE_DEFS = [
     label: 'PROCESSING CELL',
     supervisor: 'Wei Zhang',
     machines: 5,
-    cx: 25, cz: -15.5, hw: 12, hd: 10.5,
+    cx: 33, cz: -20.5, hw: 12, hd: 10.5,
     floorColor: '#F0FDF4',
     badgeColor: '#059669',
   },
@@ -126,7 +135,7 @@ const ZONE_DEFS = [
     label: 'ASSEMBLY CELL',
     supervisor: 'Carlos Gomez',
     machines: 4,
-    cx: -27, cz: 10, hw: 12, hd: 10,
+    cx: -35, cz: 15, hw: 12, hd: 10,
     floorColor: '#FFF7ED',
     badgeColor: '#EA580C',
   },
@@ -135,7 +144,7 @@ const ZONE_DEFS = [
     label: 'PACKAGING CELL',
     supervisor: 'Tom Wilson',
     machines: 3,
-    cx: 0, cz: 10.5, hw: 9.5, hd: 10,
+    cx: 0, cz: 15.5, hw: 9.5, hd: 10,
     floorColor: '#FEFCE8',
     badgeColor: '#CA8A04',
   },
@@ -144,7 +153,7 @@ const ZONE_DEFS = [
     label: 'MAINTENANCE BAY',
     supervisor: 'Sarah Jenkins',
     machines: 3,
-    cx: 23, cz: 11, hw: 11.5, hd: 10,
+    cx: 31, cz: 16, hw: 11.5, hd: 10,
     floorColor: '#FAF5FF',
     badgeColor: '#7C3AED',
   },
@@ -877,12 +886,15 @@ const SectionSupervisorLabel: React.FC<{
   badgeColor: string;
   position: [number, number, number];
   visible: boolean;
-}> = ({ label, supervisor, machineCount, badgeColor, position, visible }) => {
+  zoneNumber: number;
+  counts?: { running: number; warning: number; fault: number; maintenance: number };
+  onSelectZone?: () => void;
+}> = ({ label, supervisor, machineCount, badgeColor, position, visible, zoneNumber, counts, onSelectZone }) => {
   if (!visible) return null;
   return (
     <Html position={position} center distanceFactor={28} zIndexRange={[5, 0]}>
       <div
-        className="select-none pointer-events-none px-3 py-2 rounded-xl shadow-lg border"
+        className="select-none px-3 py-2 rounded-xl shadow-lg border cursor-pointer hover:shadow-xl transition-shadow"
         style={{
           background: 'rgba(250,249,246,0.96)',
           borderColor: badgeColor,
@@ -890,9 +902,15 @@ const SectionSupervisorLabel: React.FC<{
           minWidth: 155,
           fontFamily: 'Inter, system-ui, sans-serif',
         }}
+        onClick={(e) => { e.stopPropagation(); onSelectZone?.(); }}
       >
         <div className="flex items-center gap-1.5 mb-1">
-          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: badgeColor }} />
+          <span
+            className="w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center text-[8px] font-extrabold text-white"
+            style={{ background: badgeColor }}
+          >
+            {zoneNumber}
+          </span>
           <span className="font-extrabold text-[11px] text-[#1E293B] tracking-tight uppercase">{label}</span>
         </div>
         <div className="text-[9px] text-[#475569] font-semibold">
@@ -901,62 +919,382 @@ const SectionSupervisorLabel: React.FC<{
         <div className="text-[9px] text-[#0F766E] font-bold mt-0.5">
           Supervisor: {supervisor}
         </div>
+        {counts && (
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {counts.running > 0 && <StatusDot color="#22A06B" n={counts.running} />}
+            {counts.warning > 0 && <StatusDot color="#D99A06" n={counts.warning} />}
+            {counts.fault > 0 && <StatusDot color="#D64545" n={counts.fault} />}
+            {counts.maintenance > 0 && <StatusDot color="#3978C8" n={counts.maintenance} />}
+          </div>
+        )}
       </div>
     </Html>
   );
 };
 
+const StatusDot: React.FC<{ color: string; n: number }> = ({ color, n }) => (
+  <span className="flex items-center gap-0.5 text-[8px] font-bold" style={{ color }}>
+    <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} /> {n}
+  </span>
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Factory Floor, Walls, Walkways & Zone Environments
 // ─────────────────────────────────────────────────────────────────────────────
-const FactoryZonesEnvironment: React.FC<{ showSafety: boolean; showWalkways: boolean }> = ({
-  showSafety, showWalkways
-}) => {
-  const FW = 84, FD = 56, FH = 10;
+// ─────────────────────────────────────────────────────────────────────────────
+// Low-poly campus scenery: trees, parked vehicles, utility tanks
+// ─────────────────────────────────────────────────────────────────────────────
+const Tree: React.FC<{ position: [number, number, number] }> = ({ position }) => (
+  <group position={position}>
+    <mesh position={[0, 0.6, 0]}>
+      <cylinderGeometry args={[0.14, 0.18, 1.2, 6]} />
+      <meshStandardMaterial color="#8B5E34" roughness={0.9} />
+    </mesh>
+    <mesh position={[0, 1.7, 0]} castShadow>
+      <coneGeometry args={[1.1, 2.0, 7]} />
+      <meshStandardMaterial color="#4D7C4A" roughness={0.85} />
+    </mesh>
+    <mesh position={[0, 2.6, 0]} castShadow>
+      <coneGeometry args={[0.8, 1.4, 7]} />
+      <meshStandardMaterial color="#5B8C55" roughness={0.85} />
+    </mesh>
+  </group>
+);
+
+const ParkedCar: React.FC<{ position: [number, number, number]; color: string; rotationY?: number }> = ({ position, color, rotationY = 0 }) => (
+  <group position={position} rotation={[0, rotationY, 0]}>
+    <mesh position={[0, 0.45, 0]} castShadow>
+      <boxGeometry args={[1.8, 0.5, 3.6]} />
+      <meshStandardMaterial color={color} metalness={0.4} roughness={0.4} />
+    </mesh>
+    <mesh position={[0, 0.85, -0.2]} castShadow>
+      <boxGeometry args={[1.5, 0.4, 1.8]} />
+      <meshStandardMaterial color={color} metalness={0.3} roughness={0.4} />
+    </mesh>
+    {[[-0.85, -1.1], [0.85, -1.1], [-0.85, 1.1], [0.85, 1.1]].map(([x, z], i) => (
+      <mesh key={i} position={[x, 0.22, z]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.22, 0.22, 0.2, 10]} />
+        <meshStandardMaterial color="#1E293B" />
+      </mesh>
+    ))}
+  </group>
+);
+
+const ParkedTruck: React.FC<{ position: [number, number, number]; rotationY?: number }> = ({ position, rotationY = 0 }) => (
+  <group position={position} rotation={[0, rotationY, 0]}>
+    <mesh position={[0, 0.9, -2.2]} castShadow>
+      <boxGeometry args={[2.2, 1.8, 2.0]} />
+      <meshStandardMaterial color="#3978C8" metalness={0.3} roughness={0.5} />
+    </mesh>
+    <mesh position={[0, 1.1, 1.0]} castShadow>
+      <boxGeometry args={[2.3, 2.2, 4.4]} />
+      <meshStandardMaterial color="#E2E8F0" metalness={0.2} roughness={0.6} />
+    </mesh>
+    {[-3.2, -1.0, 1.0, 2.6].map((z, i) => (
+      [-1.05, 1.05].map((x, j) => (
+        <mesh key={`${i}-${j}`} position={[x, 0.35, z]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.32, 0.32, 0.25, 10]} />
+          <meshStandardMaterial color="#1E293B" />
+        </mesh>
+      ))
+    ))}
+  </group>
+);
+
+const TreeRound: React.FC<{ position: [number, number, number] }> = ({ position }) => (
+  <group position={position}>
+    <mesh position={[0, 0.5, 0]}>
+      <cylinderGeometry args={[0.13, 0.17, 1.0, 6]} />
+      <meshStandardMaterial color="#7C5333" roughness={0.9} />
+    </mesh>
+    <mesh position={[0, 1.55, 0]} castShadow>
+      <sphereGeometry args={[1.0, 8, 7]} />
+      <meshStandardMaterial color="#5B9457" roughness={0.85} />
+    </mesh>
+  </group>
+);
+
+const StreetLight: React.FC<{ position: [number, number, number] }> = ({ position }) => (
+  <group position={position}>
+    <mesh position={[0, 2.2, 0]}>
+      <cylinderGeometry args={[0.07, 0.09, 4.4, 8]} />
+      <meshStandardMaterial color="#4B5563" metalness={0.6} roughness={0.4} />
+    </mesh>
+    <mesh position={[0.35, 4.3, 0]} rotation={[0, 0, -0.3]}>
+      <cylinderGeometry args={[0.05, 0.05, 0.9, 6]} />
+      <meshStandardMaterial color="#4B5563" metalness={0.6} roughness={0.4} />
+    </mesh>
+    <mesh position={[0.65, 4.05, 0]}>
+      <sphereGeometry args={[0.16, 8, 8]} />
+      <meshStandardMaterial color="#FDE68A" emissive="#FDE68A" emissiveIntensity={0.7} />
+    </mesh>
+  </group>
+);
+
+const ForkliftVehicle: React.FC<{ position: [number, number, number]; rotationY?: number }> = ({ position, rotationY = 0 }) => (
+  <group position={position} rotation={[0, rotationY, 0]}>
+    <mesh position={[0, 0.5, 0]} castShadow>
+      <boxGeometry args={[1.0, 0.9, 1.6]} />
+      <meshStandardMaterial color="#D97706" metalness={0.3} roughness={0.5} />
+    </mesh>
+    <mesh position={[0, 1.15, -0.1]}>
+      <boxGeometry args={[0.15, 1.2, 0.15]} />
+      <meshStandardMaterial color="#1E293B" metalness={0.5} roughness={0.5} />
+    </mesh>
+    <mesh position={[0.5, 0.5, -1.0]}>
+      <boxGeometry args={[0.1, 0.9, 0.9]} />
+      <meshStandardMaterial color="#94A3B8" metalness={0.6} roughness={0.4} />
+    </mesh>
+    {[[-0.4, -0.5], [0.4, -0.5], [-0.4, 0.5], [0.4, 0.5]].map(([x, z], i) => (
+      <mesh key={i} position={[x, 0.2, z]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.2, 0.2, 0.18, 10]} />
+        <meshStandardMaterial color="#1E293B" />
+      </mesh>
+    ))}
+  </group>
+);
+
+const GateStructure: React.FC<{ position: [number, number, number] }> = ({ position }) => (
+  <group position={position}>
+    {[-4.2, 4.2].map((x, i) => (
+      <mesh key={i} position={[x, 2.4, 0]} castShadow>
+        <boxGeometry args={[0.5, 4.8, 0.5]} />
+        <meshStandardMaterial color="#64748B" metalness={0.5} roughness={0.4} />
+      </mesh>
+    ))}
+    <mesh position={[0, 4.7, 0]} castShadow>
+      <boxGeometry args={[9, 0.6, 0.5]} />
+      <meshStandardMaterial color="#1E293B" metalness={0.5} roughness={0.4} />
+    </mesh>
+    <mesh position={[0, 4.7, 0.3]}>
+      <boxGeometry args={[6, 0.5, 0.05]} />
+      <meshStandardMaterial color="#2563EB" emissive="#2563EB" emissiveIntensity={0.15} />
+    </mesh>
+    {/* Security booth */}
+    <mesh position={[5.8, 1.1, 0]} castShadow>
+      <boxGeometry args={[1.6, 2.2, 1.6]} />
+      <meshStandardMaterial color="#E2E8F0" metalness={0.2} roughness={0.6} />
+    </mesh>
+    <mesh position={[5.8, 1.5, 0.81]}>
+      <boxGeometry args={[1.0, 0.8, 0.05]} />
+      <meshStandardMaterial color="#A9CBEA" transparent opacity={0.6} emissive="#A9CBEA" emissiveIntensity={0.2} />
+    </mesh>
+  </group>
+);
+
+const ShippingContainer: React.FC<{ position: [number, number, number]; color: string; rotationY?: number; stackY?: number }> = ({ position, color, rotationY = 0, stackY = 0 }) => (
+  <group position={[position[0], position[1] + stackY * 2.6, position[2]]} rotation={[0, rotationY, 0]}>
+    <mesh castShadow>
+      <boxGeometry args={[2.4, 2.5, 6]} />
+      <meshStandardMaterial color={color} metalness={0.3} roughness={0.6} />
+    </mesh>
+    <mesh position={[0, 0, 3.01]}>
+      <boxGeometry args={[2.2, 2.3, 0.05]} />
+      <meshStandardMaterial color="#1E293B" metalness={0.4} roughness={0.5} />
+    </mesh>
+  </group>
+);
+
+const UtilityTank: React.FC<{ position: [number, number, number]; radius?: number; height?: number }> = ({ position, radius = 1.6, height = 4.5 }) => (
+  <group position={position}>
+    <mesh position={[0, height / 2, 0]} castShadow>
+      <cylinderGeometry args={[radius, radius, height, 18]} />
+      <meshStandardMaterial color="#B8C4CC" metalness={0.6} roughness={0.35} />
+    </mesh>
+    <mesh position={[0, height + 0.15, 0]}>
+      <cylinderGeometry args={[radius * 1.03, radius * 1.03, 0.3, 18]} />
+      <meshStandardMaterial color="#8B98A3" metalness={0.6} roughness={0.3} />
+    </mesh>
+  </group>
+);
+
+const RoadStrip: React.FC<{ position: [number, number, number]; args: [number, number]; dashed?: boolean }> = ({ position, args, dashed }) => (
+  <group>
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={position}>
+      <planeGeometry args={args} />
+      <meshStandardMaterial color="#5B5C57" roughness={0.95} />
+    </mesh>
+    {dashed && (
+      args[0] > args[1]
+        ? Array.from({ length: Math.floor(args[0] / 6) }).map((_, i) => (
+          <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[position[0] - args[0] / 2 + 3 + i * 6, position[1] + 0.002, position[2]]}>
+            <planeGeometry args={[1.6, 0.2]} />
+            <meshBasicMaterial color="#EAB308" />
+          </mesh>
+        ))
+        : Array.from({ length: Math.floor(args[1] / 6) }).map((_, i) => (
+          <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[position[0], position[1] + 0.002, position[2] - args[1] / 2 + 3 + i * 6]}>
+            <planeGeometry args={[0.2, 1.6]} />
+            <meshBasicMaterial color="#EAB308" />
+          </mesh>
+        ))
+    )}
+  </group>
+);
+
+const FactoryZonesEnvironment: React.FC<{
+  showSafety: boolean;
+  showWalkways: boolean;
+  plantLevel: boolean;
+  showRoads: boolean;
+  showTrees: boolean;
+  showVehicles: boolean;
+}> = ({ showSafety, showWalkways, plantLevel, showRoads, showTrees, showVehicles }) => {
+  const FW = 110, FD = 72;
+
+  const treePositions: [number, number, number][] = [
+    [-50, 0, -44], [-30, 0, -44], [-10, 0, -44], [10, 0, -44], [30, 0, -44], [50, 0, -44],
+    [-45, 0, 50], [-25, 0, 52], [0, 0, 51], [25, 0, 52], [45, 0, 50],
+    [-63, 0, -22], [-63, 0, 0], [-63, 0, 20],
+    [-58, 0, -36], [-38, 0, -37], [38, 0, -37], [58, 0, -36],
+    [-38, 0, 44], [12, 0, 45], [63, 0, -8], [63, 0, 26],
+  ];
+  const treeRoundPositions: [number, number, number][] = [
+    [-40, 0, -44], [-20, 0, -44], [0, 0, -44], [20, 0, -44], [40, 0, -44],
+    [-35, 0, 51], [-10, 0, 52], [15, 0, 52], [35, 0, 51],
+    [-63, 0, -11], [-63, 0, 11],
+  ];
+
+  const streetLightPositions: [number, number, number][] = [
+    [-40, 0, -9.5], [-8, 0, -9.5], [8, 0, -9.5], [40, 0, -9.5],
+    [-16.5, 0, -30], [-16.5, 0, 28], [16, 0, -30], [16, 0, 28],
+    [-58, 0, 30], [-40, 0, 46], [10, 0, 46], [FW / 2 + 6, 0, -18], [FW / 2 + 6, 0, 20],
+  ];
 
   return (
     <group>
-      {/* Base Floor */}
+      {/* Base Floor (production apron under the buildings) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
         <planeGeometry args={[FW, FD]} />
         <meshStandardMaterial color="#E5E2DA" roughness={0.88} metalness={0.02} />
       </mesh>
 
-      {/* Back Wall */}
-      <mesh position={[0, FH / 2, -FD / 2 - 0.1]} receiveShadow>
-        <boxGeometry args={[FW, FH, 0.3]} />
-        <meshStandardMaterial color="#EAE7DF" roughness={0.9} />
-      </mesh>
-      {/* Left Wall */}
-      <mesh position={[-FW / 2 - 0.1, FH / 2, 0]} receiveShadow>
-        <boxGeometry args={[0.3, FH, FD]} />
-        <meshStandardMaterial color="#EAE7DF" roughness={0.9} />
-      </mesh>
-      {/* Right Wall */}
-      <mesh position={[FW / 2 + 0.1, FH / 2, 0]} receiveShadow>
-        <boxGeometry args={[0.3, FH, FD]} />
-        <meshStandardMaterial color="#EAE7DF" roughness={0.9} />
-      </mesh>
-
-      {/* Structural columns (perimeter only) */}
-      {[-FW / 2 + 1.5, FW / 2 - 1.5].map((x, xi) =>
-        [-FD / 2 + 2, 0, FD / 2 - 2].map((z, zi) => (
-          <mesh key={`col-${xi}-${zi}`} position={[x, FH / 2, z]}>
-            <boxGeometry args={[0.9, FH, 0.9]} />
-            <meshStandardMaterial color="#CBD5E1" metalness={0.4} roughness={0.4} />
-          </mesh>
-        ))
-      )}
-
-      {/* Mid-span columns separating rows */}
-      {[-FW / 2 + 1.5, FW / 2 - 1.5].map((x, xi) => (
-        <mesh key={`midcol-${xi}`} position={[x, FH / 2, -2.5]}>
-          <boxGeometry args={[0.9, FH, 0.9]} />
-          <meshStandardMaterial color="#CBD5E1" metalness={0.4} roughness={0.4} />
+      {/* Campus apron + perimeter, gate/shipping/utility labels, low fence posts — Plant Overview only */}
+      <group visible={plantLevel}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]}>
+          <planeGeometry args={[FW + 30, FD + 30]} />
+          <meshStandardMaterial color="#C7C4BC" roughness={0.95} />
         </mesh>
-      ))}
 
-      {/* 6 Section Zone Boundaries */}
+        {/* Perimeter fence posts */}
+        {Array.from({ length: 10 }).map((_, i) => {
+          const t = i / 9;
+          const x = -FW / 2 - 14 + t * (FW + 28);
+          return (
+            <React.Fragment key={`fp-${i}`}>
+              <mesh position={[x, 0.6, -FD / 2 - 14]}><cylinderGeometry args={[0.08, 0.08, 1.2, 6]} /><meshStandardMaterial color="#94A3B8" /></mesh>
+              <mesh position={[x, 0.6, FD / 2 + 14]}><cylinderGeometry args={[0.08, 0.08, 1.2, 6]} /><meshStandardMaterial color="#94A3B8" /></mesh>
+            </React.Fragment>
+          );
+        })}
+
+        <Html position={[-FW / 2 - 6, 0.5, FD / 2 + 6]} center distanceFactor={44} zIndexRange={[3, 0]}>
+          <div className="select-none pointer-events-none px-2 py-1 rounded-lg text-[9px] font-extrabold uppercase tracking-wide text-white" style={{ background: 'rgba(30,41,59,0.75)' }}>
+            ← Main Gate
+          </div>
+        </Html>
+        <Html position={[FW / 2 - 8, 0.5, FD / 2 + 6]} center distanceFactor={44} zIndexRange={[3, 0]}>
+          <div className="select-none pointer-events-none px-2 py-1 rounded-lg text-[9px] font-extrabold uppercase tracking-wide text-white" style={{ background: 'rgba(30,41,59,0.75)' }}>
+            Shipping &amp; Receiving →
+          </div>
+        </Html>
+        <Html position={[FW / 2 + 10, 0.5, -FD / 2 + 10]} center distanceFactor={44} zIndexRange={[3, 0]}>
+          <div className="select-none pointer-events-none px-2 py-1 rounded-lg text-[9px] font-extrabold uppercase tracking-wide text-white" style={{ background: 'rgba(30,41,59,0.75)' }}>
+            Utility Area
+          </div>
+        </Html>
+
+        {/* ── Roads: a horizontal main street between the two building rows,
+            two north-south streets through the column gaps, plus a perimeter
+            ring — all sit in the gaps carved out by the zone layout. ── */}
+        {showRoads && (
+          <>
+            <RoadStrip position={[0, -0.02, -2.5]} args={[FW + 6, 15]} dashed />
+            <RoadStrip position={[-16.5, -0.02, 0]} args={[3.6, FD + 6]} dashed />
+            <RoadStrip position={[16, -0.02, 0]} args={[3.6, FD + 6]} dashed />
+            <RoadStrip position={[0, -0.025, FD / 2 + 6]} args={[FW + 14, 6]} />
+            <RoadStrip position={[FW / 2 + 6, -0.025, 0]} args={[6, FD + 14]} />
+          </>
+        )}
+
+        {/* Parking lot, west of Assembly / north of the Main Gate road — clear
+            of both the Assembly building and the gate structure's footprint */}
+        {showVehicles && (
+          <group position={[-58, 0, 31]}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.015, 0]}>
+              <planeGeometry args={[15, 9]} />
+              <meshStandardMaterial color="#8B8983" roughness={0.9} />
+            </mesh>
+            {[-6.6, -3.8, -1, 1.8, 4.6].map((x, i) => (
+              <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[x, -0.01, 0]}>
+                <planeGeometry args={[0.15, 8]} />
+                <meshBasicMaterial color="#FAF9F6" />
+              </mesh>
+            ))}
+            {[-5.2, -2.4, 0.4, 3.2, 6.0].map((x, i) => (
+              <ParkedCar
+                key={`a-${i}`}
+                position={[x, 0, -2.2]}
+                color={['#D64545', '#3978C8', '#F1F5F9', '#059669', '#94A3B8'][i]}
+              />
+            ))}
+            {[-5.2, -2.4, 0.4, 3.2].map((x, i) => (
+              <ParkedCar
+                key={`b-${i}`}
+                position={[x, 0, 2.2]}
+                color={['#1E293B', '#D97706', '#7C5CC4', '#94A3B8'][i]}
+                rotationY={Math.PI}
+              />
+            ))}
+            <Tree position={[-8.5, 0, -4.5]} />
+            <Tree position={[8, 0, 4.5]} />
+          </group>
+        )}
+
+        {/* Trucks + forklift near Shipping & Receiving */}
+        {showVehicles && (
+          <>
+            <ParkedTruck position={[FW / 2 - 12, 0, FD / 2 + 5]} rotationY={Math.PI / 2} />
+            <ParkedTruck position={[FW / 2 - 20, 0, FD / 2 + 5]} rotationY={Math.PI / 2} />
+            <ForkliftVehicle position={[FW / 2 - 27, 0, FD / 2 + 6]} rotationY={Math.PI / 2} />
+            {/* Service van near Maintenance */}
+            <ParkedCar position={[31, 0, FD / 2 + 4]} color="#94A3B8" rotationY={0} />
+          </>
+        )}
+
+        {/* Utility tanks */}
+        <group visible={showVehicles}>
+          <UtilityTank position={[FW / 2 + 10, 0, -FD / 2 + 6]} radius={1.8} height={5} />
+          <UtilityTank position={[FW / 2 + 15, 0, -FD / 2 + 6]} radius={1.4} height={4} />
+          <UtilityTank position={[FW / 2 + 10, 0, -FD / 2 + 13]} radius={1.4} height={4.5} />
+        </group>
+
+        {/* Containers + a truck beside Processing (east side) — goods staged for move-out */}
+        {showVehicles && (
+          <>
+            <ShippingContainer position={[48, 1.25, -25]} color="#3978C8" />
+            <ShippingContainer position={[48, 1.25, -18]} color="#D97706" />
+            <ShippingContainer position={[48, 3.85, -25]} color="#94A3B8" />
+            <ParkedTruck position={[54, 0, -21]} />
+          </>
+        )}
+
+        {/* Main Gate structure, spanning the south perimeter road */}
+        {showRoads && (
+          <group position={[-53, 0, FD / 2 + 6]} rotation={[0, Math.PI / 2, 0]}>
+            <GateStructure position={[0, 0, 0]} />
+          </group>
+        )}
+
+        {/* Street lights along the main street and perimeter roads */}
+        {showRoads && streetLightPositions.map((p, i) => <StreetLight key={i} position={p} />)}
+
+        {/* Trees (two low-poly variants for visual variety) */}
+        {showTrees && treePositions.map((p, i) => <Tree key={`t-${i}`} position={p} />)}
+        {showTrees && treeRoundPositions.map((p, i) => <TreeRound key={`tr-${i}`} position={p} />)}
+      </group>
+
+      {/* 6 Section Zone Boundaries (floor tint + safety stripes, sit under each building) */}
       {ZONE_DEFS.map((z) => (
         <SectionBoundary
           key={z.id}
@@ -966,57 +1304,15 @@ const FactoryZonesEnvironment: React.FC<{ showSafety: boolean; showWalkways: boo
         />
       ))}
 
-      {/* ── WALKWAYS ── */}
-      {showWalkways && (
+      {/* Pedestrian walkway paint inside each building's own footprint (kept subtle, interior-only detail) */}
+      {showWalkways && plantLevel && (
         <>
-          {/* Main east-west pedestrian corridor between rows */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, -1.5]}>
-            <planeGeometry args={[FW - 2, 2.2]} />
-            <meshBasicMaterial color="#DDE9E3" />
-          </mesh>
-          {/* Crossing stripes on main corridor */}
-          {[-30, -20, -10, 0, 10, 20, 30].map((x, i) => (
-            <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.005, -1.5]}>
-              <planeGeometry args={[0.5, 1.7]} />
-              <meshBasicMaterial color="#FAF9F6" />
+          {[-27, 0, 33].map((x, i) => (
+            <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.004, -20.5]}>
+              <planeGeometry args={[1.2, 18]} />
+              <meshBasicMaterial color="#DDE9E3" transparent opacity={0.6} />
             </mesh>
           ))}
-
-          {/* North-south corridor: Machining → Assembly */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[-13.5, 0.004, -1.5]}>
-            <planeGeometry args={[1.8, 30]} />
-            <meshBasicMaterial color="#DDE9E3" />
-          </mesh>
-
-          {/* North-south corridor: Robot → Packaging */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[10, 0.004, -1.5]}>
-            <planeGeometry args={[1.8, 30]} />
-            <meshBasicMaterial color="#DDE9E3" />
-          </mesh>
-
-          {/* North-south corridor: Processing → Maintenance */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[35, 0.004, -1.5]}>
-            <planeGeometry args={[1.8, 30]} />
-            <meshBasicMaterial color="#DDE9E3" />
-          </mesh>
-
-          {/* Logistics lane at front (south end) */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 22]}>
-            <planeGeometry args={[FW - 2, 2.4]} />
-            <meshBasicMaterial color="#E2E8F0" />
-          </mesh>
-
-          {/* Flow arrows (simple flat chevrons) */}
-          {/* Machining → Assembly arrow */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[-27, 0.006, -1.5]}>
-            <planeGeometry args={[0.6, 1.0]} />
-            <meshBasicMaterial color="#2563EB" transparent opacity={0.4} />
-          </mesh>
-          {/* Processing → Packaging arrow */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, -1.5]}>
-            <planeGeometry args={[0.6, 1.0]} />
-            <meshBasicMaterial color="#059669" transparent opacity={0.4} />
-          </mesh>
         </>
       )}
     </group>
@@ -1045,8 +1341,8 @@ const DispatchedTechnicianWalker: React.FC<DispatchedTechnicianProps> = ({
   const rightArmRef = useRef<THREE.Mesh>(null);
   const scanBeamRef = useRef<THREE.Mesh>(null);
 
-  // Home location: Left West Logistics & Technician Dispatch Gate [-39, 0, -1.5]
-  const homePos: [number, number, number] = useMemo(() => [-39, 0, -1.5], []);
+  // Home location: Left West Logistics & Technician Dispatch Gate [-52, 0, -1.5]
+  const homePos: [number, number, number] = useMemo(() => [-52, 0, -1.5], []);
 
   // Approach offset in front of target machine
   const targetPos = useMemo<[number, number, number] | null>(() => {
@@ -1056,16 +1352,20 @@ const DispatchedTechnicianWalker: React.FC<DispatchedTechnicianProps> = ({
     return [tx, 0, tz + offsetZ];
   }, [faultyMachineCode]);
 
-  // Waypoints from Left Entrance -> Main Central Walkway -> Target Machine Cell
+  // Waypoints: West Gate -> Main Street -> through the target building's door -> machine
   const waypoints = useMemo<[number, number, number][]>(() => {
-    if (!targetPos) return [homePos];
+    if (!targetPos || !faultyMachineCode) return [homePos];
     const [tx, , tz] = targetPos;
+    const zoneId = zoneIdForMachineCode(faultyMachineCode);
+    const zone = zoneId ? ZONE_DEFS.find((z) => z.id === zoneId) : null;
+    const doorX = zone ? zone.cx : tx;
     return [
-      homePos,          // 1. Left side entrance [-39, 0, -1.5]
-      [tx, 0, -1.5],    // 2. Walk along main walkway corridor to machine column
-      [tx, 0, tz],      // 3. Enter cell aisle directly in front of machine
+      homePos,            // 1. West gate
+      [doorX, 0, -1.5],   // 2. Walk the main street to this building's entrance
+      [doorX, 0, tz],     // 3. Walk straight through the door gap into the building
+      [tx, 0, tz],        // 4. Side-step to the exact machine
     ];
-  }, [homePos, targetPos]);
+  }, [homePos, targetPos, faultyMachineCode]);
 
   const { pathSegments, totalDistance } = useMemo(() => {
     const segments: { start: [number, number, number]; end: [number, number, number]; length: number }[] = [];
@@ -1313,25 +1613,50 @@ const CameraController: React.FC<{
   const { camera } = useThree();
 
   const targetPositions: Record<CameraPresetType, { pos: [number, number, number]; target: [number, number, number] }> = {
-    OVERVIEW:    { pos: [0, 46, 52],    target: [0, 1, 0] },
-    MACHINING:   { pos: [-26, 26, 10],  target: [-27, 1, -16] },
-    ROBOT:       { pos: [0, 26, 10],    target: [0, 1, -16] },
-    PROCESSING:  { pos: [25, 26, 10],   target: [24, 1, -16] },
-    ASSEMBLY:    { pos: [-26, 26, 32],  target: [-27, 1, 10] },
-    PACKAGING:   { pos: [0, 26, 32],    target: [0, 1, 10] },
-    MAINTENANCE: { pos: [24, 26, 32],   target: [23, 1, 11] },
+    OVERVIEW:    { pos: [0, 56, 104],   target: [0, 2, 0] },
+    MACHINING:   { pos: [-34, 26, 5],   target: [-35, 1, -21] },
+    ROBOT:       { pos: [0, 26, 5],     target: [0, 1, -21] },
+    PROCESSING:  { pos: [33, 26, 5],    target: [32, 1, -21] },
+    ASSEMBLY:    { pos: [-34, 26, 37],  target: [-35, 1, 15] },
+    PACKAGING:   { pos: [0, 26, 37],    target: [0, 1, 15] },
+    MAINTENANCE: { pos: [32, 26, 37],   target: [31, 1, 16] },
   };
+
+  const desiredPos = useRef(new THREE.Vector3(...targetPositions.OVERVIEW.pos));
+  const desiredTarget = useRef(new THREE.Vector3(...targetPositions.OVERVIEW.target));
+  // Only the CameraController drives the camera while a preset transition is
+  // in flight; once it converges, control is handed back fully to OrbitControls
+  // so it doesn't fight the user's manual orbit/pan/zoom afterward.
+  const transitioning = useRef(false);
 
   useEffect(() => {
     if (preset && targetPositions[preset]) {
       const { pos, target } = targetPositions[preset];
-      camera.position.set(...pos);
+      desiredPos.current.set(...pos);
+      desiredTarget.current.set(...target);
+      transitioning.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset, resetTrigger]);
+
+  useFrame(() => {
+    if (!transitioning.current) return;
+    camera.position.lerp(desiredPos.current, 0.08);
+    if (controlsRef.current) {
+      controlsRef.current.target.lerp(desiredTarget.current, 0.08);
+      controlsRef.current.update();
+    }
+    const posDone = camera.position.distanceTo(desiredPos.current) < 0.05;
+    const targetDone = !controlsRef.current || controlsRef.current.target.distanceTo(desiredTarget.current) < 0.05;
+    if (posDone && targetDone) {
+      camera.position.copy(desiredPos.current);
       if (controlsRef.current) {
-        controlsRef.current.target.set(...target);
+        controlsRef.current.target.copy(desiredTarget.current);
         controlsRef.current.update();
       }
+      transitioning.current = false;
     }
-  }, [preset, resetTrigger]);
+  });
 
   return (
     <OrbitControls
@@ -1362,8 +1687,10 @@ export const FactoryCanvas: React.FC<FactoryCanvasProps> = ({
   layers,
   resetTrigger = 0,
   cameraPreset = 'OVERVIEW',
+  onPresetChange,
   liveTelemetry = {},
   dispatchedTarget = null,
+  viewLevel = 'PLANT',
 }) => {
   const machineByCode = useMemo(() => {
     const map: Record<string, Machine> = {};
@@ -1422,76 +1749,117 @@ export const FactoryCanvas: React.FC<FactoryCanvasProps> = ({
   // 24 workers distributed across all zones
   const workersList = useMemo(() => [
     // Machining (yellow helmets)
-    { pos: [-31, 0, -15] as [number,number,number], rot: 0.2,  name: 'Arun Kumar',   role: 'Machining Supervisor',  activity: 'CNC-01 Spindle Inspection', helmet: '#FACC15' },
-    { pos: [-25, 0, -15] as [number,number,number], rot: -0.1, name: 'John Miller',  role: 'CNC Operator',          activity: 'Operating CNC-02', helmet: '#FACC15' },
-    { pos: [-18, 0, -15] as [number,number,number], rot: 0.3,  name: 'Dev Patel',    role: 'CNC Technician',        activity: 'CNC-06 Tool Change', helmet: '#FACC15' },
-    { pos: [-30, 0, -7]  as [number,number,number], rot: 0.0,  name: 'Marcus Lee',   role: 'Mechanical Tech',       activity: 'CNC-04 Setup', helmet: '#FFFFFF' },
+    { pos: [-39, 0, -20] as [number,number,number], rot: 0.2,  name: 'Arun Kumar',   role: 'Machining Supervisor',  activity: 'CNC-01 Spindle Inspection', helmet: '#FACC15' },
+    { pos: [-33, 0, -20] as [number,number,number], rot: -0.1, name: 'John Miller',  role: 'CNC Operator',          activity: 'Operating CNC-02', helmet: '#FACC15' },
+    { pos: [-26, 0, -20] as [number,number,number], rot: 0.3,  name: 'Dev Patel',    role: 'CNC Technician',        activity: 'CNC-06 Tool Change', helmet: '#FACC15' },
+    { pos: [-38, 0, -12] as [number,number,number], rot: 0.0,  name: 'Marcus Lee',   role: 'Mechanical Tech',       activity: 'CNC-04 Setup', helmet: '#FFFFFF' },
     // Robot Cell (blue helmets)
-    { pos: [-2, 0, -17]  as [number,number,number], rot: -0.3, name: 'Priya Nair',   role: 'Robot Cell Supervisor', activity: 'Axis 3 Calibration', helmet: '#3B82F6' },
-    { pos: [7, 0, -17]   as [number,number,number], rot: 0.2,  name: 'Kenji Ito',    role: 'Robotics Operator',     activity: 'ROBOT-02 Program Load', helmet: '#3B82F6' },
-    { pos: [2, 0, -8]    as [number,number,number], rot: -0.1, name: 'Lisa Wong',    role: 'Automation Tech',       activity: 'ROBOT-03 End-effector swap', helmet: '#3B82F6' },
+    { pos: [-2, 0, -22]  as [number,number,number], rot: -0.3, name: 'Priya Nair',   role: 'Robot Cell Supervisor', activity: 'Axis 3 Calibration', helmet: '#3B82F6' },
+    { pos: [7, 0, -22]   as [number,number,number], rot: 0.2,  name: 'Kenji Ito',    role: 'Robotics Operator',     activity: 'ROBOT-02 Program Load', helmet: '#3B82F6' },
+    { pos: [2, 0, -13]   as [number,number,number], rot: -0.1, name: 'Lisa Wong',    role: 'Automation Tech',       activity: 'ROBOT-03 End-effector swap', helmet: '#3B82F6' },
     // Processing (green helmets)
-    { pos: [16, 0, -17]  as [number,number,number], rot: 0.5,  name: 'Wei Zhang',    role: 'Process Supervisor',    activity: 'MIXER-01 RPM Check', helmet: '#22C55E' },
-    { pos: [23, 0, -17]  as [number,number,number], rot: -0.2, name: 'Carlos Gomez', role: 'Fluids Specialist',     activity: 'PUMP-01 Seal Inspection', helmet: '#22C55E' },
-    { pos: [30, 0, -15]  as [number,number,number], rot: 0.1,  name: 'Ana Torres',   role: 'Process Operator',      activity: 'PRESS-01 Safety Check', helmet: '#FFFFFF' },
-    { pos: [22, 0, -8]   as [number,number,number], rot: 0.3,  name: 'Sam Park',     role: 'Process Technician',    activity: 'PROCESS-02 Monitoring', helmet: '#22C55E' },
+    { pos: [24, 0, -22]  as [number,number,number], rot: 0.5,  name: 'Wei Zhang',    role: 'Process Supervisor',    activity: 'MIXER-01 RPM Check', helmet: '#22C55E' },
+    { pos: [31, 0, -22]  as [number,number,number], rot: -0.2, name: 'Carlos Gomez', role: 'Fluids Specialist',     activity: 'PUMP-01 Seal Inspection', helmet: '#22C55E' },
+    { pos: [38, 0, -20]  as [number,number,number], rot: 0.1,  name: 'Ana Torres',   role: 'Process Operator',      activity: 'PRESS-01 Safety Check', helmet: '#FFFFFF' },
+    { pos: [30, 0, -13]  as [number,number,number], rot: 0.3,  name: 'Sam Park',     role: 'Process Technician',    activity: 'PROCESS-02 Monitoring', helmet: '#22C55E' },
     // Assembly (orange helmets)
-    { pos: [-31, 0, 10]  as [number,number,number], rot: -0.2, name: 'Carlos G.',    role: 'Assembly Supervisor',   activity: 'ASMB-01 Line Check', helmet: '#F97316' },
-    { pos: [-25, 0, 10]  as [number,number,number], rot: 0.1,  name: 'Raj Mehta',    role: 'Assembly Worker',       activity: 'Component Assembly', helmet: '#F97316' },
-    { pos: [-30, 0, 17]  as [number,number,number], rot: 0.4,  name: 'Nina Cole',    role: 'Assembly Technician',   activity: 'ASMB-03 Torque Verify', helmet: '#F97316' },
-    { pos: [-24, 0, 17]  as [number,number,number], rot: -0.3, name: 'Ben Harris',   role: 'Assembly Operator',     activity: 'Final Sub-assembly', helmet: '#FFFFFF' },
+    { pos: [-39, 0, 15]  as [number,number,number], rot: -0.2, name: 'Carlos G.',    role: 'Assembly Supervisor',   activity: 'ASMB-01 Line Check', helmet: '#F97316' },
+    { pos: [-33, 0, 15]  as [number,number,number], rot: 0.1,  name: 'Raj Mehta',    role: 'Assembly Worker',       activity: 'Component Assembly', helmet: '#F97316' },
+    { pos: [-38, 0, 22]  as [number,number,number], rot: 0.4,  name: 'Nina Cole',    role: 'Assembly Technician',   activity: 'ASMB-03 Torque Verify', helmet: '#F97316' },
+    { pos: [-32, 0, 22]  as [number,number,number], rot: -0.3, name: 'Ben Harris',   role: 'Assembly Operator',     activity: 'Final Sub-assembly', helmet: '#FFFFFF' },
     // Packaging (white helmets)
-    { pos: [-3, 0, 10]   as [number,number,number], rot: 0.2,  name: 'Tom Wilson',   role: 'Packaging Supervisor',  activity: 'PACK-01 Line Status', helmet: '#FFFFFF' },
-    { pos: [5, 0, 10]    as [number,number,number], rot: -0.1, name: 'Amy Chen',     role: 'Packaging Operator',    activity: 'PACK-02 Box Sealing', helmet: '#FFFFFF' },
-    { pos: [1, 0, 17]    as [number,number,number], rot: 0.3,  name: 'Leo Davis',    role: 'Logistics Operator',    activity: 'Pallet Staging', helmet: '#F59E0B' },
+    { pos: [-3, 0, 15]   as [number,number,number], rot: 0.2,  name: 'Tom Wilson',   role: 'Packaging Supervisor',  activity: 'PACK-01 Line Status', helmet: '#FFFFFF' },
+    { pos: [5, 0, 15]    as [number,number,number], rot: -0.1, name: 'Amy Chen',     role: 'Packaging Operator',    activity: 'PACK-02 Box Sealing', helmet: '#FFFFFF' },
+    { pos: [1, 0, 22]    as [number,number,number], rot: 0.3,  name: 'Leo Davis',    role: 'Logistics Operator',    activity: 'Pallet Staging', helmet: '#F59E0B' },
     // Maintenance (red helmets)
-    { pos: [15, 0, 10]   as [number,number,number], rot: -0.2, name: 'Sarah Jenkins',role: 'Maintenance Supervisor', activity: 'Work Order Review', helmet: '#EF4444' },
-    { pos: [22, 0, 10]   as [number,number,number], rot: 0.3,  name: 'Frank Moore',  role: 'Maintenance Tech',      activity: 'BENCH-02 Bearing Swap', helmet: '#EF4444' },
-    { pos: [28, 0, 10]   as [number,number,number], rot: -0.4, name: 'Tina Ross',    role: 'Electrical Tech',       activity: 'TEST-01 Diagnostics', helmet: '#EF4444' },
-    { pos: [20, 0, 17]   as [number,number,number], rot: 0.1,  name: 'Ed Nguyen',    role: 'Inventory Clerk',       activity: 'Spare Parts Count', helmet: '#94A3B8' },
+    { pos: [23, 0, 15]   as [number,number,number], rot: -0.2, name: 'Sarah Jenkins',role: 'Maintenance Supervisor', activity: 'Work Order Review', helmet: '#EF4444' },
+    { pos: [30, 0, 15]   as [number,number,number], rot: 0.3,  name: 'Frank Moore',  role: 'Maintenance Tech',      activity: 'BENCH-02 Bearing Swap', helmet: '#EF4444' },
+    { pos: [36, 0, 15]   as [number,number,number], rot: -0.4, name: 'Tina Ross',    role: 'Electrical Tech',       activity: 'TEST-01 Diagnostics', helmet: '#EF4444' },
+    { pos: [28, 0, 22]   as [number,number,number], rot: 0.1,  name: 'Ed Nguyen',    role: 'Inventory Clerk',       activity: 'Spare Parts Count', helmet: '#94A3B8' },
     // Corridor workers
     { pos: [-13, 0, -1]  as [number,number,number], rot: 0.0,  name: 'Pat Kim',      role: 'Material Handler',      activity: 'Parts Transfer to Assembly', helmet: '#F59E0B' },
     { pos: [10, 0, -1]   as [number,number,number], rot: 0.5,  name: 'Jess Ali',     role: 'Forklift Operator',     activity: 'Finished Goods Movement', helmet: '#F59E0B' },
   ], []);
 
-  // Filter out static Frank Moore if he is dynamically dispatched
+  // When the user has entered a building, everything belonging to the other
+  // five zones is hidden entirely — full isolation, not dimming.
+  const activeZoneId: ZoneId | null = viewLevel === 'INTERIOR' ? (cameraPreset as ZoneId) : null;
+  const activeZoneDef = activeZoneId ? ZONE_DEFS.find((z) => z.id === activeZoneId) : null;
+  const isInActiveZone = (pos: [number, number, number]): boolean => {
+    if (!activeZoneDef) return true;
+    return (
+      pos[0] >= activeZoneDef.cx - activeZoneDef.hw && pos[0] <= activeZoneDef.cx + activeZoneDef.hw &&
+      pos[2] >= activeZoneDef.cz - activeZoneDef.hd && pos[2] <= activeZoneDef.cz + activeZoneDef.hd
+    );
+  };
+
+  // Filter out static Frank Moore if he is dynamically dispatched, and hide
+  // workers outside the currently-entered building (if any).
   const activeWorkers = useMemo(() => {
-    if (activeFaultyMachine) {
-      return workersList.filter((w) => w.name !== 'Frank Moore');
-    }
-    return workersList;
-  }, [workersList, activeFaultyMachine]);
+    let list = activeFaultyMachine ? workersList.filter((w) => w.name !== 'Frank Moore') : workersList;
+    if (activeZoneDef) list = list.filter((w) => isInActiveZone(w.pos));
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workersList, activeFaultyMachine, activeZoneId]);
+
+  // Only render the dispatched technician if their target is inside the
+  // building the user is currently in (or the user is at Plant Overview).
+  const showTechnician = !activeZoneId || (!!activeFaultyMachine && zoneIdForMachineCode(activeFaultyMachine) === activeZoneId);
 
   return (
     <div className="w-full h-full relative" style={{ background: 'linear-gradient(180deg, #EBE8E1 0%, #F3F1EC 100%)' }}>
       <Canvas
-        camera={{ position: [0, 44, 52], fov: 48, near: 0.1, far: 400 }}
+        camera={{ position: [0, 56, 104], fov: 48, near: 0.1, far: 400 }}
         shadows
         gl={{ antialias: true, alpha: false }}
         onCreated={({ gl }) => { gl.setClearColor('#F3F1EC', 1); }}
         onClick={(e) => { if (e.target === e.currentTarget) onSelectMachine(null); }}
       >
         {/* Lighting */}
-        <ambientLight intensity={1.35} color="#FAF9F6" />
+        <ambientLight intensity={1.05} color="#F3F1EC" />
         <directionalLight
-          position={[25, 40, 30]}
-          intensity={1.3}
+          position={[35, 48, 38]}
+          intensity={1.55}
+          color="#FFF4E0"
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
-          shadow-camera-far={120}
-          shadow-camera-left={-50}
-          shadow-camera-right={50}
-          shadow-camera-top={50}
-          shadow-camera-bottom={-50}
+          shadow-camera-far={170}
+          shadow-camera-left={-75}
+          shadow-camera-right={75}
+          shadow-camera-top={75}
+          shadow-camera-bottom={-75}
         />
-        <directionalLight position={[-25, 22, -20]} intensity={0.4} color="#E0F2FE" />
+        <directionalLight position={[-30, 26, -25]} intensity={0.45} color="#DCEBFA" />
 
-        {/* Factory floor, walls, zone boundaries, walkways */}
-        <FactoryZonesEnvironment showSafety={layers.safetyZones} showWalkways={layers.walkways} />
+        {/* Factory floor, walls, zone boundaries, walkways, campus scenery */}
+        <FactoryZonesEnvironment
+          showSafety={layers.safetyZones}
+          showWalkways={layers.walkways}
+          plantLevel={viewLevel === 'PLANT'}
+          showRoads={layers.roads}
+          showTrees={layers.trees}
+          showVehicles={layers.vehicles}
+        />
 
-        {/* Section Supervisor Labels */}
-        {layers.supervisors && ZONE_DEFS.map((z) => (
+        {/* Section Building Shells — real buildings, visible only at Plant Overview */}
+        {layers.buildings && ZONE_DEFS.map((z) => (
+          <SectionBuildingShell
+            key={z.id}
+            cx={z.cx}
+            cz={z.cz}
+            hw={z.hw}
+            hd={z.hd}
+            badgeColor={z.badgeColor}
+            kind={z.id as ZoneId}
+            plantLevel={viewLevel === 'PLANT'}
+            doorSide={z.cz < 0 ? 'south' : 'north'}
+            onClick={() => onPresetChange?.(z.id as CameraPresetType)}
+          />
+        ))}
+
+        {/* Section Supervisor Labels — Plant Overview only; existing machine labels take over inside */}
+        {layers.supervisors && viewLevel === 'PLANT' && ZONE_DEFS.map((z, idx) => (
           <SectionSupervisorLabel
             key={z.id}
             label={z.label}
@@ -1500,11 +1868,14 @@ export const FactoryCanvas: React.FC<FactoryCanvasProps> = ({
             badgeColor={z.badgeColor}
             position={[z.cx, 6.5, z.cz - z.hd + 2.0]}
             visible={layers.supervisors}
+            zoneNumber={idx + 1}
+            counts={getZoneStatusCounts(z.id as ZoneId, machines)}
+            onSelectZone={() => onPresetChange?.(z.id as CameraPresetType)}
           />
         ))}
 
-        {/* Machines */}
-        {layers.machines && allRenderedMachines.map((m) => {
+        {/* Machines — only the entered building's machines render once inside */}
+        {layers.machines && allRenderedMachines.filter((m) => !activeZoneId || zoneIdForMachineCode(m.code) === activeZoneId).map((m) => {
           const liveM = machineByCode[m.code];
           const status = liveM?.status || 'RUNNING';
           const health = liveM?.health_score ?? 98;
@@ -1540,27 +1911,33 @@ export const FactoryCanvas: React.FC<FactoryCanvasProps> = ({
               {m.type === 'PACKAGING'   && <PackagingMachineMesh color={color} isSelected={isSelected} />}
               {m.type === 'MAINTENANCE' && <MaintenanceBenchMesh color={color} isSelected={isSelected} variant={(m as any).variant ?? 'bench'} />}
 
-              <group position={[0, (m as any).labelH ?? 3.8, 0]}>
-                <MachineLabel
-                  code={m.code}
-                  status={status}
-                  health={health}
-                  color={color}
-                  isSelected={isSelected}
-                  isFault={isFault}
-                  visible={layers.machineLabels}
-                  onClick={() => onSelectMachine(liveM || ({
-                    id: m.code, code: m.code, name: m.code,
-                    type: (m as any).type, status, health_score: health
-                  } as any))}
-                />
-                {isSelected && layers.liveSensors && (
-                  <SelectedMachineSensors
-                    telemetry={liveTelemetry[m.code]}
+              {/* Machine badges/HUDs are Html overlays and aren't occluded by
+                  the (opaque) building roof, so they only render once the
+                  user is actually inside the building — the building's own
+                  supervisor/signage card is the only thing shown from outside. */}
+              {viewLevel === 'INTERIOR' && (
+                <group position={[0, (m as any).labelH ?? 3.8, 0]}>
+                  <MachineLabel
+                    code={m.code}
+                    status={status}
+                    health={health}
+                    color={color}
+                    isSelected={isSelected}
                     isFault={isFault}
+                    visible={layers.machineLabels}
+                    onClick={() => onSelectMachine(liveM || ({
+                      id: m.code, code: m.code, name: m.code,
+                      type: (m as any).type, status, health_score: health
+                    } as any))}
                   />
-                )}
-              </group>
+                  {isSelected && layers.liveSensors && (
+                    <SelectedMachineSensors
+                      telemetry={liveTelemetry[m.code]}
+                      isFault={isFault}
+                    />
+                  )}
+                </group>
+              )}
             </group>
           );
         })}
@@ -1580,7 +1957,7 @@ export const FactoryCanvas: React.FC<FactoryCanvasProps> = ({
         ))}
 
         {/* Dynamic Dispatched Technician Walker */}
-        {layers.workers && (
+        {layers.workers && showTechnician && (
           <DispatchedTechnicianWalker
             faultyMachineCode={activeFaultyMachine}
             workerName="Frank Moore"
