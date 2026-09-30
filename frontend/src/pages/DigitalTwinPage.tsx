@@ -6,9 +6,13 @@ import {
   HardHat, MapPin, UserCheck, AlertOctagon, Check, Plus, Zap, Gauge, QrCode, Send, PlayCircle,
   Shield, AlertTriangle, ArrowRight, CheckSquare, Sparkles, SlidersHorizontal, ArrowLeft
 } from 'lucide-react';
-import { FactoryCanvas, LayerConfig, CameraPresetType } from '../components/DigitalTwin/FactoryCanvas';
+import { FactoryCanvas, LayerConfig, CameraPresetType, ZONE_DEFS, ViewLevel } from '../components/DigitalTwin/FactoryCanvas';
+import { Breadcrumb } from '../components/DigitalTwin/Breadcrumb';
+import { CompassOverlay } from '../components/DigitalTwin/CompassOverlay';
+import { ZoneId, zoneIdForMachineCode } from '../components/DigitalTwin/zoneData';
 import { Machine, TelemetryData, Incident, WorkOrder } from '../types';
-import { api } from '../services/api';
+import { api, socket } from '../services/api';
+import { CustomSelect } from '../components/common/CustomSelect';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status Colors & Badge Helpers
@@ -237,7 +241,13 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   const [tab, setTab] = useState<'live' | 'simulate' | 'ai' | 'wo' | 'timeline'>('live');
   const [applyingLoto, setApplyingLoto] = useState(false);
   const [submittingInspection, setSubmittingInspection] = useState(false);
-  const [inspectionSubmitted, setInspectionSubmitted] = useState(false);
+  // Reconstruct from the backend-authoritative work order instead of always
+  // starting false — otherwise reopening this panel on an INSPECTING-or-later
+  // work order would hide the already-submitted inspection and show the
+  // inspection form again.
+  const [inspectionSubmitted, setInspectionSubmitted] = useState(
+    Boolean(workOrder && ['WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED'].includes(workOrder.technician_phase || ''))
+  );
   const [completing, setCompleting] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [healing, setHealing] = useState(false);
@@ -256,9 +266,8 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   useEffect(() => {
     if (tab === 'timeline' && incident?.id) {
       setTimelineLoading(true);
-      fetch(`/api/incidents/${incident.id}/events`)
-        .then(r => r.json())
-        .then(d => { if (d.success) setTimelineEvents(d.data || []); })
+      api.getIncidentEvents(incident.id)
+        .then(d => { if (d && d.success) setTimelineEvents(d.data || []); })
         .catch(() => {})
         .finally(() => setTimelineLoading(false));
     }
@@ -281,10 +290,9 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   const handleInjectFault = async () => {
     setSimulating(true);
     setSimMsg(null);
-    onDispatchTechnician?.(machine.code);
     try {
       await api.injectFault(machine.code, scenario.anomalyType, 1.0, scenario.scenarioId);
-      setSimMsg(`⚠️ Scenario "${scenario.name}" triggered on ${machine.code}. Dispatched technician en route...`);
+      setSimMsg(`⚠️ Anomaly scenario triggered on ${machine.code}. IoT Edge Alert & AI Agent active...`);
       onRefresh();
       setTab('ai');
     } catch (err: any) {
@@ -314,9 +322,10 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   const handleTechnicianArrive = async () => {
     if (!workOrder) return;
     setArriving(true);
+    const techName = workOrder.technician_name || 'Assigned Technician';
     try {
-      await api.markTechnicianArrived(workOrder.id, 'Arun Kumar (Lead Tech)');
-      setSimMsg(`📍 Technician arrived on site for ${machine.code}.`);
+      await api.markTechnicianArrived(workOrder.id, techName);
+      setSimMsg(`📍 ${techName} arrived on site for ${machine.code}.`);
       onRefresh();
     } catch (err: any) {
       setSimMsg(`Error: ${err.message}`);
@@ -328,9 +337,10 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   const handleApplyLOTO = async () => {
     if (!workOrder) return;
     setApplyingLoto(true);
+    const techName = workOrder.technician_name || 'Assigned Technician';
     try {
-      await api.applyLOTO(workOrder.id, 'Arun Kumar (Lead Tech)');
-      setSimMsg('🔒 OSHA 1910.147 LOTO Lockout verified.');
+      await api.applyLOTO(workOrder.id, techName);
+      setSimMsg(`🔒 OSHA 1910.147 LOTO Lockout verified by ${techName}.`);
       onRefresh();
       checkPartATP('PART-SKF-6205');
     } catch (err: any) {
@@ -343,9 +353,10 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   const handleSubmitPhysicalInspection = async () => {
     if (!workOrder) return;
     setSubmittingInspection(true);
+    const techName = workOrder.technician_name || 'Assigned Technician';
     try {
       const res = await api.submitInspection(workOrder.id, {
-        technicianName: 'Arun Kumar (Lead Tech)',
+        technicianName: techName,
         symptomsObserved: selectedSymptoms,
         technicianRootCause: techRootCause,
         requiredPartId: selectedPartId,
@@ -353,7 +364,7 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
       });
       if (res.success) {
         setInspectionSubmitted(true);
-        setSimMsg('✅ Physical inspection recorded & spare part allocated via ATP.');
+        setSimMsg(`✅ Physical inspection recorded by ${techName} & spare part allocated via ATP.`);
         onRefresh();
       }
     } catch (err: any) {
@@ -366,10 +377,11 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   const handleComplete = async () => {
     if (!workOrder) return;
     setCompleting(true);
+    const techName = workOrder.technician_name || 'Assigned Technician';
     try {
       await api.healMachine(machine.code);
-      await api.completeRepair(workOrder.id, 'Arun Kumar (Lead Tech)');
-      setSimMsg('✅ Repair completed. Autonomous 10s sensor verification running...');
+      await api.completeRepair(workOrder.id, techName);
+      setSimMsg(`✅ Repair completed by ${techName}. Autonomous 10s sensor verification running...`);
       onRefresh();
     } catch (err: any) {
       setSimMsg(`Error: ${err.message}`);
@@ -401,9 +413,9 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
   ];
 
   return (
-    <div className="absolute right-4 top-4 bottom-4 w-[390px] min-w-[390px] max-w-[390px] bg-[#FAF9F6]/98 backdrop-blur-xl border border-[#DDD9D0] rounded-2xl flex flex-col shadow-2xl overflow-hidden z-50 animate-fade-in">
+    <div className="absolute right-4 top-4 bottom-4 w-[390px] min-w-[390px] max-w-[390px] bg-[#FAF9F6] border border-[#DDD9D0] rounded-2xl flex flex-col shadow-2xl overflow-hidden z-50 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#DDD9D0] bg-white/90 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#DDD9D0] bg-white flex-shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-xl flex items-center justify-center border shadow-sm flex-shrink-0" style={{ background: `${color}15`, borderColor: `${color}40` }}>
             <Box size={16} style={{ color }} />
@@ -468,7 +480,7 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
       </div>
 
       {/* Navigation Tabs — 5-Column Equal Width Grid */}
-      <div className="grid grid-cols-5 border-b border-[#DDD9D0] bg-white/90 flex-shrink-0">
+      <div className="grid grid-cols-5 border-b border-[#DDD9D0] bg-white flex-shrink-0">
         {[
           { id: 'live',     label: 'Live'     },
           { id: 'simulate', label: 'Simulate' },
@@ -491,7 +503,7 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
       </div>
 
       {/* Tab Content (Fixed Scrollable Viewport with zero horizontal shift) */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-3 text-xs w-full no-scrollbar">
+      <div className="flex-1 overflow-y-auto p-3.5 space-y-3 text-xs w-full bg-[#FAF9F6] no-scrollbar">
         {/* Toast inside drawer */}
         {simMsg && (
           <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-[#1E293B] text-[11px] font-semibold leading-relaxed animate-in fade-in">
@@ -792,16 +804,18 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
                       <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                         Spare Part & ATP Check
                       </label>
-                      <select
+                      <CustomSelect
                         value={selectedPartId}
-                        onChange={(e) => checkPartATP(e.target.value)}
-                        className="w-full px-2 py-1.5 bg-[#FAF9F6] border border-[#DDD9D0] rounded-lg text-xs font-mono"
-                      >
-                        <option value="PART-SKF-6205">SKF-6205-2RSH Spindle Bearing</option>
-                        <option value="PART-FAG-7210">FAG-7210-B Support Bearing</option>
-                        <option value="PART-TIMKEN-TAP-01">TIMKEN-32008X Roller Bearing</option>
-                        <option value="PART-HYD-SEAL-01">PARKER-V884 Seal Kit</option>
-                      </select>
+                        onChange={(val) => checkPartATP(val)}
+                        options={[
+                          { value: 'PART-SKF-6205', label: 'SKF-6205-2RSH Spindle Bearing' },
+                          { value: 'PART-FAG-7210', label: 'FAG-7210-B Support Bearing' },
+                          { value: 'PART-TIMKEN-TAP-01', label: 'TIMKEN-32008X Roller Bearing' },
+                          { value: 'PART-HYD-SEAL-01', label: 'PARKER-V884 Seal Kit' },
+                        ]}
+                        fullWidth
+                        size="xs"
+                      />
                     </div>
 
                     <button
@@ -821,17 +835,37 @@ const MachineDetailsPanel: React.FC<DetailsProps> = ({
                     <div className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
                       <CheckCircle2 size={12} /> Step 3: Repair Execution & IoT Verification
                     </div>
-                    <p className="text-[11px] text-[#64748B]">
-                      Component replaced. Trigger autonomous 10s sensor check to verify baseline recovery.
-                    </p>
-                    <button
-                      onClick={handleComplete}
-                      disabled={completing}
-                      className="w-full py-2.5 text-xs font-bold rounded-xl bg-[#22A06B] hover:bg-emerald-700 text-white shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle2 size={14} />
-                      {completing ? 'Verifying 10s Baseline...' : '3. Complete Repair & Verify Baseline'}
-                    </button>
+                    {machine.status === 'VERIFYING' || workOrder.status === 'VERIFYING' || completing ? (
+                      <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-center space-y-1">
+                        <div className="text-[11px] font-bold text-indigo-900 flex items-center justify-center gap-1.5">
+                          <Activity size={14} className="animate-spin text-indigo-600" />
+                          <span>Sensor Baseline Verification In Progress...</span>
+                        </div>
+                        <p className="text-[10px] text-indigo-700">Checking 3-cycle nominal vibration & temperature.</p>
+                      </div>
+                    ) : machine.status === 'RUNNING' || workOrder.status === 'COMPLETED' ? (
+                      <div className="p-2.5 bg-emerald-100/80 border border-emerald-300 rounded-lg text-center space-y-1">
+                        <div className="text-xs font-extrabold text-emerald-900 flex items-center justify-center gap-1.5">
+                          <CheckCircle2 size={14} className="text-emerald-700" />
+                          <span>Repair Verified & Machine Running</span>
+                        </div>
+                        <p className="text-[10px] text-emerald-800">All sensor telemetry within nominal baseline thresholds.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-[11px] text-[#64748B]">
+                          Component replaced. Trigger autonomous sensor check to verify baseline recovery.
+                        </p>
+                        <button
+                          onClick={handleComplete}
+                          disabled={completing}
+                          className="w-full py-2.5 text-xs font-bold rounded-xl bg-[#22A06B] hover:bg-emerald-700 text-white shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle2 size={14} />
+                          <span>3. Complete Repair & Verify Baseline</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </>
@@ -960,10 +994,25 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
   const woId = workOrder?.id || `WO-1082`;
   const techSignName = workOrder?.technician_name || 'Frank Moore (Maintenance Specialist)';
 
+  // The backend work order (technician_phase, loto_applied) is authoritative —
+  // reconstruct the wizard's step from it instead of always starting at Phase
+  // 1. Without this, closing and reopening the workstation (or navigating away
+  // and back) silently reset an in-progress INSPECTING/REPAIRING work order
+  // back to "Phase 1 — LOTO" in the UI even though the backend, the 3D label,
+  // and the Dashboard all correctly still show the real in-progress state.
+  const ARRIVED_OR_LATER = new Set(['ARRIVED', 'LOTO', 'INSPECTING', 'WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED']);
+  const LOTO_DONE_OR_LATER = new Set(['INSPECTING', 'WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED']);
+  const INSPECTION_DONE_OR_LATER = new Set(['WAITING_PARTS', 'REPAIRING', 'VERIFYING', 'RETURNING', 'COMPLETED']);
+  const phase = workOrder?.technician_phase || '';
+  const initialHasArrived = Boolean(workOrder?.loto_applied) || ARRIVED_OR_LATER.has(phase);
+  const initialLotoApplied = Boolean(workOrder?.loto_applied) || LOTO_DONE_OR_LATER.has(phase);
+  const initialInspectionSubmitted = INSPECTION_DONE_OR_LATER.has(phase);
+  const initialActivePhase: 1 | 2 | 3 | 4 = initialInspectionSubmitted ? 3 : initialLotoApplied ? 2 : 1;
+
   // Stepper State
-  const [activePhase, setActivePhase] = useState<1 | 2 | 3 | 4>(1);
+  const [activePhase, setActivePhase] = useState<1 | 2 | 3 | 4>(initialActivePhase);
   const [arrivingOnSite, setArrivingOnSite] = useState(false);
-  const [hasArrived, setHasArrived] = useState(false);
+  const [hasArrived, setHasArrived] = useState(initialHasArrived);
 
   // Phase 4: AI SOP Assistant & RAG Knowledge Base
   const [sopQuestion, setSopQuestion] = useState('');
@@ -1001,7 +1050,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
   const [voltageReading, setVoltageReading] = useState('0.0');
   const [pressureReading, setPressureReading] = useState('0.0');
   const [executingLoto, setExecutingLoto] = useState(false);
-  const [lotoApplied, setLotoApplied] = useState(workOrder?.loto_applied || false);
+  const [lotoApplied, setLotoApplied] = useState(initialLotoApplied);
 
   // Phase 2: Inspection & ATP
   const availableSymptoms = [
@@ -1019,7 +1068,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
   const [scanningPart, setScanningPart] = useState(false);
   const [partScanned, setPartScanned] = useState(false);
   const [submittingInspection, setSubmittingInspection] = useState(false);
-  const [inspectionSubmitted, setInspectionSubmitted] = useState(false);
+  const [inspectionSubmitted, setInspectionSubmitted] = useState(initialInspectionSubmitted);
 
   // Phase 3: Repair & Verification
   const [completingRepair, setCompletingRepair] = useState(false);
@@ -1032,6 +1081,35 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
       .then((res) => { if (res.success && res.data) setAtpStatus(res.data); })
       .catch(() => {});
   }, [selectedPartId]);
+
+  // Auto-resolve verification if machine or WO is in VERIFYING state
+  useEffect(() => {
+    if (machine.status === 'VERIFYING' || workOrder?.status === 'VERIFYING') {
+      if (verificationCountdown === null) {
+        let count = 4;
+        setVerificationCountdown(count);
+        const interval = setInterval(async () => {
+          count -= 1;
+          if (count <= 0) {
+            clearInterval(interval);
+            setVerificationCountdown(0);
+            try {
+              await api.healMachine(machine.code);
+              if (workOrder?.id) await api.completeRepair(workOrder.id, techSignName);
+            } catch (e) {}
+            setRepairSuccess(true);
+            setCompletingRepair(false);
+            if (onDispatchTechnician) onDispatchTechnician(null);
+            onRefresh();
+            showToast(`🎉 Verification Complete! ${machine.code} restored to RUNNING.`);
+          } else {
+            setVerificationCountdown(count);
+          }
+        }, 1000);
+        return () => clearInterval(interval);
+      }
+    }
+  }, [machine.status, workOrder?.status]);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -1133,32 +1211,37 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
       if (workOrder?.id) {
         await api.completeRepair(workOrder.id, techSignName);
       }
-      // Autonomous 10-second verification countdown
-      setVerificationCountdown(10);
+      showToast(`⚙️ Physical repair recorded. Autonomous baseline verification running...`);
+      onRefresh();
+
+      // Autonomous 4-second verification countdown
+      let count = 4;
+      setVerificationCountdown(count);
       const interval = setInterval(() => {
-        setVerificationCountdown((prev) => {
-          if (prev === null || prev <= 1) {
-            clearInterval(interval);
-            setRepairSuccess(true);
-            setCompletingRepair(false);
-            onDispatchTechnician?.(null);
-            onRefresh();
-            showToast(`🎉 Verification Complete! ${machine.code} restored to RUNNING (100% nominal baselines).`);
-            return 0;
-          }
-          return prev - 1;
-        });
+        count -= 1;
+        if (count <= 0) {
+          clearInterval(interval);
+          setVerificationCountdown(0);
+          setRepairSuccess(true);
+          setCompletingRepair(false);
+          if (onDispatchTechnician) onDispatchTechnician(null);
+          onRefresh();
+          showToast(`🎉 Verification Complete! ${machine.code} restored to RUNNING (100% nominal baselines).`);
+        } else {
+          setVerificationCountdown(count);
+        }
       }, 1000);
     } catch {
       setCompletingRepair(false);
-      onDispatchTechnician?.(null);
+      setRepairSuccess(true);
+      if (onDispatchTechnician) onDispatchTechnician(null);
       showToast(`Repair verified & machine running.`);
       onRefresh();
     }
   };
 
   return (
-    <div className="absolute right-4 top-4 bottom-4 w-[420px] min-w-[390px] max-w-[440px] bg-[#FAF9F6]/98 backdrop-blur-xl border border-[#DDD9D0] rounded-2xl flex flex-col shadow-2xl overflow-hidden z-50 animate-fade-in">
+    <div className="absolute right-4 top-4 bottom-4 w-[420px] min-w-[390px] max-w-[440px] bg-[#FAF9F6] border border-[#DDD9D0] rounded-2xl flex flex-col shadow-2xl overflow-hidden z-50 animate-fade-in">
       {/* Toast Notification */}
       {toastMsg && (
         <div className="absolute top-14 left-4 right-4 z-50 bg-[#0F766E] text-white px-3 py-2 rounded-xl shadow-xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-top-2">
@@ -1168,7 +1251,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#DDD9D0] bg-white/95 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#DDD9D0] bg-white flex-shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-xl bg-[#0F766E]/10 border border-[#0F766E]/20 flex items-center justify-center text-[#0F766E] flex-shrink-0">
             <HardHat size={18} />
@@ -1226,7 +1309,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
       </div>
 
       {/* Stepper Navigation */}
-      <div className="grid grid-cols-4 gap-1 p-2.5 bg-white/60 border-b border-[#DDD9D0] flex-shrink-0">
+      <div className="grid grid-cols-4 gap-1 p-2.5 bg-white border-b border-[#DDD9D0] flex-shrink-0">
         <button
           onClick={() => setActivePhase(1)}
           className={`p-1 rounded-xl border text-center transition-all ${
@@ -1301,7 +1384,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
       </div>
 
       {/* Scrollable Workstation Body */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs bg-[#FAF9F6]">
         {/* ── PHASE 1: OSHA 1910.147 LOTO ── */}
         {activePhase === 1 && (
           <div className="space-y-3.5 animate-in fade-in">
@@ -1376,7 +1459,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
               <div className="space-y-3 pt-1">
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1 flex items-center gap-1">
+                    <label className="text-[10px] font-bold text-[#64748B] uppercase mb-1 flex items-center gap-1">
                       <Lock size={10} /> Padlock Serial
                     </label>
                     <input
@@ -1387,7 +1470,7 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1 flex items-center gap-1">
+                    <label className="text-[10px] font-bold text-[#64748B] uppercase mb-1 flex items-center gap-1">
                       <Zap size={10} className="text-amber-500" /> Voltage (VAC)
                     </label>
                     <input
@@ -1503,17 +1586,19 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                       Replacement Part
                     </label>
-                    <select
+                    <CustomSelect
                       value={selectedPartId}
-                      onChange={(e) => setSelectedPartId(e.target.value)}
-                      className="w-full px-2.5 py-2 bg-white border border-[#DDD9D0] rounded-xl text-xs text-[#1E293B] font-mono font-semibold"
-                    >
-                      <option value="PART-SKF-6205">SKF-6205-2RSH — Deep Groove Bearing</option>
-                      <option value="PART-FAG-7210">FAG-7210-B-TVP — Angular Contact Bearing</option>
-                      <option value="PART-TIMKEN-TAP-01">TIMKEN-32008X — Tapered Roller</option>
-                      <option value="PART-HYD-SEAL-01">PARKER-V884 — Fluorocarbon Seal Kit</option>
-                      <option value="PART-FANUC-SV-03">FANUC-A06B — AC Servo Motor</option>
-                    </select>
+                      onChange={(val) => setSelectedPartId(val)}
+                      options={[
+                        { value: 'PART-SKF-6205', label: 'SKF-6205-2RSH — Deep Groove Bearing' },
+                        { value: 'PART-FAG-7210', label: 'FAG-7210-B-TVP — Angular Contact Bearing' },
+                        { value: 'PART-TIMKEN-TAP-01', label: 'TIMKEN-32008X — Tapered Roller' },
+                        { value: 'PART-HYD-SEAL-01', label: 'PARKER-V884 — Fluorocarbon Seal Kit' },
+                        { value: 'PART-FANUC-SV-03', label: 'FANUC-A06B — AC Servo Motor' },
+                      ]}
+                      fullWidth
+                      size="md"
+                    />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
@@ -1618,39 +1703,85 @@ const FieldTechnicianWorkstationDrawer: React.FC<WorkstationDrawerProps> = ({
               </ul>
             </div>
 
-            {verificationCountdown !== null && verificationCountdown > 0 && (
-              <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center space-y-2">
+            {/* Verifying state (either via active countdown or machine/wo status) */}
+            {(machine.status === 'VERIFYING' || workOrder?.status === 'VERIFYING' || (verificationCountdown !== null && verificationCountdown > 0) || completingRepair) && (
+              <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center space-y-2 animate-in fade-in">
                 <div className="text-xs font-extrabold text-indigo-900 flex items-center justify-center gap-2">
                   <Activity size={16} className="animate-spin text-indigo-600" />
                   <span>Autonomous Sensor Baseline Verification In Progress...</span>
                 </div>
                 <div className="text-2xl font-black font-mono text-indigo-700">
-                  {verificationCountdown}s
+                  {verificationCountdown !== null && verificationCountdown > 0 ? `${verificationCountdown}s` : 'Analyzing 3-Cycle Baselines...'}
                 </div>
                 <div className="w-full bg-indigo-200 h-2 rounded-full overflow-hidden">
                   <div
                     className="bg-indigo-600 h-full transition-all duration-1000"
-                    style={{ width: `${((10 - verificationCountdown) / 10) * 100}%` }}
+                    style={{ width: `${verificationCountdown !== null ? ((4 - verificationCountdown) / 4) * 100 : 75}%` }}
                   />
                 </div>
+                <p className="text-[10px] text-indigo-800 font-medium mt-1">
+                  Verifying vibration &lt; 2.5 mm/s RMS • Temp &lt; 65°C • Pressure 5.2 bar
+                </p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await api.healMachine(machine.code);
+                      if (workOrder?.id) await api.completeRepair(workOrder.id, techSignName);
+                    } catch {}
+                    setVerificationCountdown(0);
+                    setRepairSuccess(true);
+                    setCompletingRepair(false);
+                    if (onDispatchTechnician) onDispatchTechnician(null);
+                    onRefresh();
+                    showToast(`🎉 Verification Complete! ${machine.code} restored to RUNNING.`);
+                  }}
+                  className="mt-2 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 mx-auto cursor-pointer active:scale-95"
+                >
+                  <Check size={14} />
+                  <span>Confirm Baselines & Mark RUNNING</span>
+                </button>
               </div>
             )}
 
-            {repairSuccess && (
-              <div className="p-4 bg-emerald-50 border-2 border-emerald-300 rounded-xl text-center space-y-2">
+            {/* Completed state */}
+            {(repairSuccess || machine.status === 'RUNNING' || workOrder?.status === 'COMPLETED') &&
+             !(machine.status === 'VERIFYING' || workOrder?.status === 'VERIFYING' || (verificationCountdown !== null && verificationCountdown > 0)) && (
+              <div className="p-4 bg-emerald-50 border-2 border-emerald-300 rounded-xl text-center space-y-3 animate-in fade-in">
                 <div className="w-10 h-10 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-600 mx-auto">
                   <Check size={20} />
                 </div>
-                <div className="text-sm font-extrabold text-emerald-900">
-                  {machine.code} Restored to RUNNING Status!
+                <div>
+                  <div className="text-sm font-extrabold text-emerald-900">
+                    {machine.code} Restored to RUNNING Status!
+                  </div>
+                  <p className="text-[11px] text-emerald-700 mt-0.5">
+                    All telemetry sensors are nominal (Health: 99%). Physical repair verified & technician released.
+                  </p>
                 </div>
-                <p className="text-[11px] text-emerald-700">
-                  All telemetry sensors are nominal (Health: 100%). Dispatched technician returned to dispatch base.
-                </p>
+                <div className="pt-1 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onSwitchToMachineSpecs}
+                    className="flex-1 py-2 bg-[#0F766E] hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Activity size={13} />
+                    <span>View Telemetry Specs</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             )}
 
-            {!repairSuccess && verificationCountdown === null && (
+            {/* Ready to trigger repair */}
+            {!(machine.status === 'VERIFYING' || workOrder?.status === 'VERIFYING' || (verificationCountdown !== null && verificationCountdown > 0) || completingRepair) &&
+             !(repairSuccess || machine.status === 'RUNNING' || workOrder?.status === 'COMPLETED') && (
               <div className="pt-2 flex justify-end">
                 <button
                   type="button"
@@ -1803,27 +1934,37 @@ const FactoryMinimap: React.FC<{
   machines: Machine[];
   selectedMachine: Machine | null;
   onSelect: (m: Machine) => void;
-}> = ({ machines, selectedMachine, onSelect }) => {
+  selectedZoneId?: ZoneId | null;
+  onSelectZone?: (zoneId: ZoneId) => void;
+  dispatchedTarget?: string | null;
+  viewLevel?: ViewLevel;
+}> = ({ machines, selectedMachine, onSelect, selectedZoneId = null, onSelectZone, dispatchedTarget = null, viewLevel = 'PLANT' }) => {
   const [collapsed, setCollapsed] = useState(false);
 
-  const dots = [
+  const allDots = [
     // Machining (top-left zone ~8–30% x, 15–45% y)
     { code: 'CNC-01',   x: 8,  y: 20 }, { code: 'CNC-02', x: 14, y: 20 }, { code: 'CNC-03', x: 20, y: 20 },
     { code: 'CNC-04',   x: 8,  y: 35 }, { code: 'CNC-05', x: 14, y: 35 }, { code: 'CNC-06', x: 20, y: 35 },
-    // Robot (center-top zone ~37–60% x)
-    { code: 'ROBOT-01', x: 37, y: 20 }, { code: 'ROBOT-02', x: 46, y: 20 },
-    { code: 'ROBOT-03', x: 37, y: 35 }, { code: 'ROBOT-04', x: 46, y: 35 },
-    // Processing (top-right zone ~65–92% x)
-    { code: 'MIXER-01',   x: 64, y: 20 }, { code: 'PUMP-01', x: 74, y: 20 }, { code: 'PRESS-01', x: 84, y: 20 },
-    { code: 'PROCESS-01', x: 64, y: 35 }, { code: 'PROCESS-02', x: 74, y: 35 },
+    // Robot (swapped with Processing — now the top-right zone ~65–92% x)
+    { code: 'ROBOT-01', x: 64, y: 20 }, { code: 'ROBOT-02', x: 74, y: 20 },
+    { code: 'ROBOT-03', x: 64, y: 35 }, { code: 'ROBOT-04', x: 74, y: 35 },
+    // Processing (swapped with Robot — now the center-top zone ~37–60% x)
+    { code: 'MIXER-01',   x: 37, y: 20 }, { code: 'PUMP-01', x: 46, y: 20 }, { code: 'PRESS-01', x: 55, y: 20 },
+    { code: 'PROCESS-01', x: 37, y: 35 }, { code: 'PROCESS-02', x: 46, y: 35 },
     // Assembly (bottom-left ~8–30%, spread to fill the zone like Machining)
     { code: 'ASMB-01', x: 8,  y: 62 }, { code: 'ASMB-02', x: 22, y: 62 },
     { code: 'ASMB-03', x: 8,  y: 78 }, { code: 'ASMB-04', x: 22, y: 78 },
-    // Packaging (center-bottom ~37–60%)
-    { code: 'PACK-01', x: 37, y: 62 }, { code: 'PACK-02', x: 46, y: 62 }, { code: 'PACK-03', x: 42, y: 78 },
-    // Maintenance (bottom-right ~65–92%)
-    { code: 'BENCH-01', x: 64, y: 62 }, { code: 'BENCH-02', x: 76, y: 62 }, { code: 'TEST-01', x: 70, y: 78 },
+    // Packaging (swapped with Maintenance — now bottom-right ~65–92%)
+    { code: 'PACK-01', x: 64, y: 62 }, { code: 'PACK-02', x: 76, y: 62 }, { code: 'PACK-03', x: 70, y: 78 },
+    // Maintenance (swapped with Packaging — now center-bottom ~37–60%)
+    { code: 'BENCH-01', x: 37, y: 62 }, { code: 'BENCH-02', x: 46, y: 62 }, { code: 'TEST-01', x: 42, y: 78 },
   ];
+
+  // Inside a building, the minimap shows only that building's machines —
+  // it should not read as if the other interiors were part of it.
+  const dots = viewLevel === 'INTERIOR' && selectedZoneId
+    ? allDots.filter((d) => zoneIdForMachineCode(d.code) === selectedZoneId)
+    : allDots;
 
   const machineByCode = useMemo(() => {
     const map: Record<string, Machine> = {};
@@ -1858,21 +1999,30 @@ const FactoryMinimap: React.FC<{
         {/* Zone borders (2 rows × 3 cols) */}
         <div className="absolute inset-0 grid grid-cols-3 grid-rows-2">
           {[
-            { label: 'MACH', color: '#D97706' },
-            { label: 'ROBOT', color: '#2563EB' },
-            { label: 'PROC', color: '#059669' },
-            { label: 'ASMB', color: '#EA580C' },
-            { label: 'PACK', color: '#CA8A04' },
-            { label: 'MAINT', color: '#7C3AED' },
-          ].map((z, i) => (
-            <div
-              key={i}
-              className="border border-[#DDD9D0]/60 flex items-start justify-start p-0.5"
-              style={{ background: `${z.color}08` }}
-            >
-              <span className="text-[7px] font-extrabold" style={{ color: z.color }}>{z.label}</span>
-            </div>
-          ))}
+            // Grid cell order = visual left-to-right, top-to-bottom position,
+            // matching the swapped 3D campus layout (Robot<->Processing,
+            // Packaging<->Maintenance).
+            { id: 'MACHINING' as ZoneId, label: 'MACH', color: '#D97706' },
+            { id: 'PROCESSING' as ZoneId, label: 'PROC', color: '#059669' },
+            { id: 'ROBOT' as ZoneId, label: 'ROBOT', color: '#2563EB' },
+            { id: 'ASSEMBLY' as ZoneId, label: 'ASMB', color: '#EA580C' },
+            { id: 'MAINTENANCE' as ZoneId, label: 'MAINT', color: '#7C3AED' },
+            { id: 'PACKAGING' as ZoneId, label: 'PACK', color: '#CA8A04' },
+          ].map((z, i) => {
+            const isActiveZone = selectedZoneId === z.id;
+            return (
+              <button
+                key={i}
+                onClick={() => onSelectZone?.(z.id)}
+                className={`border flex items-start justify-start p-0.5 transition-all ${
+                  isActiveZone ? 'border-[#2563EB]' : 'border-[#DDD9D0]/60'
+                }`}
+                style={{ background: isActiveZone ? `${z.color}22` : `${z.color}08` }}
+              >
+                <span className="text-[7px] font-extrabold" style={{ color: z.color }}>{z.label}</span>
+              </button>
+            );
+          })}
         </div>
         {/* Machine dots */}
         {dots.map((d) => {
@@ -1880,16 +2030,21 @@ const FactoryMinimap: React.FC<{
           const status = m?.status || 'RUNNING';
           const color = S_COLORS[status] || S_COLORS.RUNNING;
           const isSelected = selectedMachine?.code === d.code;
+          const isDispatchTarget = dispatchedTarget === d.code;
           return (
             <button
               key={d.code}
               onClick={() => onSelect(m || ({ id: d.code, code: d.code, name: d.code, status } as any))}
-              title={`${d.code} (${status})`}
+              title={`${d.code} (${status})${isDispatchTarget ? ' — Technician en route' : ''}`}
               className={`absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 transition-all ${
                 isSelected ? 'ring-2 ring-blue-600 scale-125 z-10' : 'hover:scale-110'
               }`}
               style={{ left: `${d.x}%`, top: `${d.y}%`, backgroundColor: color, boxShadow: `0 0 4px ${color}80` }}
-            />
+            >
+              {isDispatchTarget && (
+                <span className="absolute inset-[-3px] rounded-full border-2 border-[#2563EB] animate-ping" />
+              )}
+            </button>
           );
         })}
       </div>
@@ -1920,6 +2075,10 @@ const LayersPanel: React.FC<{
         { k: 'safetyZones',  label: 'Safety Zones & Floors' },
         { k: 'walkways',     label: 'Pedestrian Walkways' },
         { k: 'liveSensors',  label: 'Selected Sensor HUD' },
+        { k: 'buildings',    label: 'Section Buildings' },
+        { k: 'roads',        label: 'Campus Roads' },
+        { k: 'trees',        label: 'Trees & Landscaping' },
+        { k: 'vehicles',     label: 'Vehicles & Parking' },
       ].map((item) => (
         <label key={item.k} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl hover:bg-[#EAE7E0] cursor-pointer">
           <input
@@ -1970,25 +2129,79 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
     safetyZones: true,
     walkways: true,
     liveSensors: true,
+    buildings: true,
+    roads: true,
+    trees: true,
+    vehicles: true,
   });
 
   const [showLayers, setShowLayers] = useState(false);
   const [cameraPreset, setCameraPreset] = useState<CameraPresetType>('OVERVIEW');
+  const [viewLevel, setViewLevel] = useState<ViewLevel>('PLANT');
   const [resetTrigger, setResetTrigger] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [dispatchedTarget, setDispatchedTarget] = useState<string | null>(null);
-
   const [activePanel, setActivePanel] = useState<'MACHINE' | 'WORKSTATION'>('MACHINE');
+
+  // Listen to AI Agent dispatch to drive 3D technician walker
+  useEffect(() => {
+    const handleWorkOrderCreated = (data: any) => {
+      const target = data?.machineCode || data?.machineId;
+      if (target) {
+        setDispatchedTarget(target);
+      }
+    };
+    const handleWorkOrderCompleted = () => {
+      setDispatchedTarget(null);
+    };
+
+    socket.on('workorder:created', handleWorkOrderCreated);
+    socket.on('workorder:completed', handleWorkOrderCompleted);
+    socket.on('incident:resolved', handleWorkOrderCompleted);
+
+    return () => {
+      socket.off('workorder:created', handleWorkOrderCreated);
+      socket.off('workorder:completed', handleWorkOrderCompleted);
+      socket.off('incident:resolved', handleWorkOrderCompleted);
+    };
+  }, []);
+
+  // ── Shared navigation "source of truth" — tabs, 3D buildings, supervisor
+  // labels, minimap and search all drive the camera/viewLevel through these.
+  // Two levels only: Plant Overview, or directly inside a building. ──
+  const exitBuilding = () => {
+    setCameraPreset('OVERVIEW');
+    setViewLevel('PLANT');
+    setResetTrigger((v) => v + 1);
+    onSelectMachine(null);
+  };
+
+  const enterBuilding = (zoneId: CameraPresetType) => {
+    setCameraPreset(zoneId);
+    setViewLevel('INTERIOR');
+    onSelectMachine(null);
+  };
+
+  // Jumps the camera to a machine's zone (if not already there) and commits
+  // to Interior level — used whenever a machine is selected by any path
+  // (3D click, minimap, search) so the drill-down flow stays consistent.
+  const activateMachine = (m: Machine) => {
+    const zoneId = zoneIdForMachineCode(m.code);
+    if (zoneId && cameraPreset !== zoneId) setCameraPreset(zoneId);
+    setViewLevel('INTERIOR');
+  };
 
   const handleSelectTechnician = (code: string) => {
     const target = machines.find((m) => m.code === code) || (selectedMachine?.code === code ? selectedMachine : machines[0]);
     if (target) {
+      activateMachine(target);
       onSelectMachine(target);
       setActivePanel('WORKSTATION');
     }
   };
 
   const handleSelectMachine = (m: Machine | null) => {
+    if (m) activateMachine(m);
     onSelectMachine(m);
     setActivePanel('MACHINE');
   };
@@ -2027,7 +2240,7 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
       <div className="h-14 bg-[#FAF9F6] border-b border-[#DDD9D0] flex items-center px-5 gap-3 shadow-sm z-10 flex-shrink-0">
         {/* Floor Label */}
         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-[#DDD9D0] text-xs font-bold text-[#1E293B]">
-          <LayoutGrid size={13} className="text-[#2563EB]" /> Floor 1 — Main Plant
+          <LayoutGrid size={13} className="text-[#2563EB]" /> Main Plant
         </div>
 
         {/* Camera Presets */}
@@ -2044,8 +2257,8 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
             <button
               key={preset.id}
               onClick={() => {
-                setCameraPreset(preset.id as CameraPresetType);
-                handleSelectMachine(null);
+                if (preset.id === 'OVERVIEW') exitBuilding();
+                else enterBuilding(preset.id as CameraPresetType);
               }}
               className={`px-2 py-1 text-[11px] font-bold rounded-lg transition-all ${
                 cameraPreset === preset.id && !selectedMachine
@@ -2130,18 +2343,24 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
           layers={layers}
           resetTrigger={resetTrigger}
           cameraPreset={cameraPreset}
+          onPresetChange={enterBuilding}
           liveTelemetry={mergedTelemetry}
           dispatchedTarget={dispatchedTarget}
+          viewLevel={viewLevel}
+          workOrders={workOrders}
         />
 
-        {/* Top-Left Live Status Badge */}
-        <div className="absolute top-3 left-3 flex items-center gap-2 bg-white/95 backdrop-blur-md border border-[#DDD9D0] rounded-xl px-3 py-1.5 shadow-sm">
-          <span className="w-2 h-2 rounded-full bg-[#22A06B] animate-pulse" />
-          <span className="text-xs font-bold text-[#1E293B] font-mono tracking-wide">3D INDUSTRIAL DIGITAL TWIN</span>
-        </div>
+        {/* Top-Left Breadcrumb (Plant Overview > Building) + Exit Building */}
+        <Breadcrumb
+          viewLevel={viewLevel}
+          zoneLabel={cameraPreset !== 'OVERVIEW' ? ZONE_DEFS.find((z) => z.id === cameraPreset)?.label ?? null : null}
+          onExitBuilding={exitBuilding}
+        />
+
+        <CompassOverlay />
 
         {/* Top-Right Asset Counts */}
-        <div className={`absolute top-3 ${selectedMachine ? 'right-96' : 'right-3'} transition-all duration-200 flex items-center gap-2.5 bg-white/95 backdrop-blur-md border border-[#DDD9D0] rounded-xl px-3 py-1.5 shadow-sm text-xs`}>
+        <div className={`absolute top-3 ${selectedMachine ? 'right-96' : 'right-3'} transition-all duration-200 flex items-center gap-2.5 bg-white border border-[#DDD9D0] rounded-xl px-3 py-1.5 shadow-md text-xs`}>
           <span className="text-[#64748B]">IoT Assets:</span>
           <span className="font-mono font-extrabold text-[#2563EB]">{realIotMachines.length}</span>
           <span className="w-px h-3 bg-[#DDD9D0]" />
@@ -2157,10 +2376,14 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
           machines={machines}
           selectedMachine={selectedMachine}
           onSelect={(m) => handleSelectMachine(m)}
+          selectedZoneId={cameraPreset !== 'OVERVIEW' ? (cameraPreset as ZoneId) : null}
+          onSelectZone={(zoneId) => enterBuilding(zoneId)}
+          dispatchedTarget={dispatchedTarget}
+          viewLevel={viewLevel}
         />
 
         {/* Bottom-Right Legend */}
-        <div className={`absolute bottom-3 ${selectedMachine ? 'right-96' : 'right-3'} transition-all duration-200 flex items-center gap-3 bg-white/95 backdrop-blur-md border border-[#DDD9D0] rounded-xl px-3 py-2 shadow-sm`}>
+        <div className={`absolute bottom-3 ${selectedMachine ? 'right-96' : 'right-3'} transition-all duration-200 flex items-center gap-3 bg-white border border-[#DDD9D0] rounded-xl px-3 py-2 shadow-md`}>
           {[
             { label: 'Running', color: '#22A06B' },
             { label: 'Warning', color: '#D99A06' },
@@ -2197,10 +2420,7 @@ export const DigitalTwinPage: React.FC<DigitalTwinPageProps> = ({
             workOrder={currentWO}
             onClose={() => handleSelectMachine(null)}
             onRefresh={onRefresh}
-            onFitFactory={() => {
-              setCameraPreset('OVERVIEW');
-              setResetTrigger((v) => v + 1);
-            }}
+            onFitFactory={exitBuilding}
             onDispatchTechnician={setDispatchedTarget}
             onOpenWorkstation={() => setActivePanel('WORKSTATION')}
           />

@@ -1,13 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   HardHat, Wrench, ShieldCheck, Mail, Phone, MapPin, 
   Clock, Award, CheckCircle2, RefreshCw, Package, Plus, 
   Send, AlertTriangle, Boxes, X, ShoppingCart, Lock, Key,
   FileCheck2, ShieldAlert, Cpu, Activity, PlayCircle, Eye,
-  QrCode, Scan, Zap, Gauge, Check, UserCheck, AlertOctagon
+  QrCode, Scan, Zap, Gauge, Check, UserCheck, AlertOctagon,
+  Search
 } from 'lucide-react';
 import { api, socket } from '../../services/api';
 import { WorkOrder } from '../../types';
+import { CustomSelect } from '../common/CustomSelect';
 
 interface LotoProtocolStep {
   id: string;
@@ -62,6 +65,34 @@ export const TechniciansView: React.FC = () => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 4500);
   };
+
+  // Filter & Search states for Technicians Roster
+  const [techSearch, setTechSearch] = useState('');
+  const [techStatusFilter, setTechStatusFilter] = useState<'ALL' | 'AVAILABLE' | 'BUSY'>('ALL');
+  const [techSkillFilter, setTechSkillFilter] = useState('ALL');
+
+  const filteredTechnicians = useMemo(() => {
+    return technicians.filter(tech => {
+      const q = techSearch.toLowerCase().trim();
+      const skillsList = typeof tech.skills === 'string' ? JSON.parse(tech.skills || '[]') : (tech.skills || []);
+      const matchesSearch = !q || 
+        tech.name.toLowerCase().includes(q) || 
+        (tech.role || '').toLowerCase().includes(q) ||
+        (tech.assigned_area || '').toLowerCase().includes(q) ||
+        skillsList.some((s: string) => s.toLowerCase().includes(q));
+
+      let matchesStatus = true;
+      if (techStatusFilter === 'AVAILABLE') matchesStatus = tech.status === 'AVAILABLE' || tech.status === 'ON_DUTY';
+      else if (techStatusFilter === 'BUSY') matchesStatus = tech.status === 'BUSY' || tech.status === 'IN_REPAIR';
+
+      let matchesSkill = true;
+      if (techSkillFilter !== 'ALL') {
+        matchesSkill = skillsList.some((s: string) => s.toUpperCase().includes(techSkillFilter));
+      }
+
+      return matchesSearch && matchesStatus && matchesSkill;
+    });
+  }, [technicians, techSearch, techStatusFilter, techSkillFilter]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -280,7 +311,7 @@ export const TechniciansView: React.FC = () => {
     : false;
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-6 w-full">
       {/* Toast Notification */}
       {toastMsg && (
         <div className="fixed top-20 right-6 z-50 bg-[#2563EB] text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3 border border-blue-400/30 text-xs font-bold animate-in fade-in slide-in-from-top-2">
@@ -403,14 +434,57 @@ export const TechniciansView: React.FC = () => {
       </div>
 
       {/* Grid of Certified Technicians */}
-      <div>
-        <h3 className="text-sm font-bold text-[#1E293B] mb-3 flex items-center gap-2">
-          <HardHat size={15} className="text-[#2563EB]" />
-          Certified Reliability Engineers & Technicians
-        </h3>
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FAF9F6] p-4 rounded-2xl border border-[#DDD9D0] shadow-xs">
+          <div>
+            <h3 className="text-sm font-bold text-[#1E293B] flex items-center gap-2">
+              <HardHat size={16} className="text-[#2563EB]" />
+              Certified Reliability Engineers &amp; Technicians ({filteredTechnicians.length})
+            </h3>
+            <p className="text-xs text-[#64748B] mt-0.5">OSHA 1910.147 certified personnel, shift zoning, and active live workload.</p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#64748B]" />
+              <input
+                type="text"
+                placeholder="Search tech, skill, area..."
+                value={techSearch}
+                onChange={(e) => setTechSearch(e.target.value)}
+                className="pl-8 pr-3 py-1.5 bg-white border border-[#DDD9D0] rounded-xl text-xs text-[#1E293B] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 shadow-xs"
+              />
+            </div>
+
+            <CustomSelect
+              value={techStatusFilter}
+              onChange={(val) => setTechStatusFilter(val as any)}
+              options={[
+                { value: 'ALL', label: 'All Status' },
+                { value: 'AVAILABLE', label: 'Available / On Duty' },
+                { value: 'BUSY', label: 'Busy / In Repair' },
+              ]}
+              size="sm"
+            />
+
+            <CustomSelect
+              value={techSkillFilter}
+              onChange={(val) => setTechSkillFilter(val)}
+              options={[
+                { value: 'ALL', label: 'All Skills' },
+                { value: 'VIBRATION', label: 'Vibration Analyst' },
+                { value: 'CNC', label: 'CNC Milling' },
+                { value: 'ROBOT', label: 'Robotics' },
+                { value: 'HYDRAULIC', label: 'Hydraulics' },
+                { value: 'LOTO', label: 'OSHA LOTO' },
+              ]}
+              size="sm"
+            />
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {technicians.map((tech) => {
+          {filteredTechnicians.map((tech) => {
             const skillsList = typeof tech.skills === 'string' ? JSON.parse(tech.skills || '[]') : (tech.skills || []);
             const isAvailable = tech.status === 'AVAILABLE' || tech.status === 'ON_DUTY';
 
@@ -458,7 +532,7 @@ export const TechniciansView: React.FC = () => {
                   <div className="mt-4 pt-3 border-t border-[#DDD9D0]">
                     <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-2 flex items-center gap-1.5">
                       <Award size={13} className="text-[#D99A06]" />
-                      OSHA Qualifications & Certified Protocols
+                      OSHA Qualifications &amp; Certified Protocols
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {skillsList.map((sk: string, i: number) => (
@@ -473,20 +547,31 @@ export const TechniciansView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Active Assignments Footer & Request Action */}
-                <div className="pt-3 border-t border-[#DDD9D0] flex items-center justify-between text-xs">
+                {/* Active Assignments Footer & Actions */}
+                <div className="pt-3 border-t border-[#DDD9D0] flex items-center justify-between text-xs gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[#64748B]">Workload:</span>
                     <span className="font-mono font-bold text-[#1E293B] bg-white px-2 py-0.5 rounded border border-[#DDD9D0]">
                       {tech.active_work_orders || 0} Active
                     </span>
                   </div>
-                  <button
-                    onClick={() => handleOpenPartsModal(tech)}
-                    className="text-[11px] font-bold text-[#2563EB] hover:underline flex items-center gap-1"
-                  >
-                    <Package size={12} /> Request Part
-                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => showToast(`📞 Shift Intercom Connected: Calling ${tech.name} on Shift Channel 04 (${tech.assigned_area || 'Machining Cell'}).`)}
+                      className="text-[11px] font-bold text-[#1E293B] hover:text-[#2563EB] flex items-center gap-1 bg-white hover:bg-blue-50 px-2 py-1 rounded-lg border border-[#DDD9D0] transition-colors shadow-2xs"
+                      title="Call technician on plant shift radio"
+                    >
+                      <Phone size={11} className="text-[#2563EB]" />
+                      <span>Radio</span>
+                    </button>
+                    <button
+                      onClick={() => handleOpenPartsModal(tech)}
+                      className="text-[11px] font-bold text-[#2563EB] hover:underline flex items-center gap-1"
+                    >
+                      <Package size={12} /> Request Part
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -495,8 +580,8 @@ export const TechniciansView: React.FC = () => {
       </div>
 
       {/* Interactive OSHA 1910.147 Field Technician Workstation Modal */}
-      {showLotoModal && activeWO && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+      {showLotoModal && activeWO && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-[#FAF9F6] border border-[#DDD9D0] rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl animate-in fade-in zoom-in-95 overflow-hidden">
             
             {/* Modal Header */}
@@ -651,7 +736,7 @@ export const TechniciansView: React.FC = () => {
                     {/* Zero Energy Measurements & Padlock Serial */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
                       <div>
-                        <label className="block text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <label className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1 flex items-center gap-1">
                           <Lock size={11} /> Padlock Serial Number
                         </label>
                         <input
@@ -663,7 +748,7 @@ export const TechniciansView: React.FC = () => {
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <label className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1 flex items-center gap-1">
                           <Zap size={11} className="text-amber-500" /> Multi-meter Voltage (VAC)
                         </label>
                         <input
@@ -676,7 +761,7 @@ export const TechniciansView: React.FC = () => {
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <label className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1 flex items-center gap-1">
                           <Gauge size={11} className="text-blue-500" /> Manifold Pressure (bar)
                         </label>
                         <input
@@ -786,20 +871,22 @@ export const TechniciansView: React.FC = () => {
                           <label className="block text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">
                             Required Replacement Part
                           </label>
-                          <select
+                          <CustomSelect
                             value={inspectionPartId}
-                            onChange={(e) => {
-                              setInspectionPartId(e.target.value);
-                              checkPartATP(e.target.value);
+                            onChange={(val) => {
+                              setInspectionPartId(val);
+                              checkPartATP(val);
                             }}
-                            className="w-full px-3 py-2 bg-[#FAF9F6] border border-[#DDD9D0] rounded-xl text-xs text-[#1E293B] font-mono font-semibold"
-                          >
-                            <option value="PART-SKF-6205">SKF-6205-2RSH — Deep Groove Ball Bearing</option>
-                            <option value="PART-FAG-7210">FAG-7210-B-TVP — Angular Contact Bearing</option>
-                            <option value="PART-TIMKEN-TAP-01">TIMKEN-32008X — Tapered Roller Bearing</option>
-                            <option value="PART-HYD-SEAL-01">PARKER-V884-75 — Fluorocarbon Seal Kit</option>
-                            <option value="PART-FANUC-SV-03">FANUC-A06B-0223 — AC Servo Drive Motor</option>
-                          </select>
+                            options={[
+                              { value: 'PART-SKF-6205', label: 'SKF-6205-2RSH — Deep Groove Ball Bearing' },
+                              { value: 'PART-FAG-7210', label: 'FAG-7210-B-TVP — Angular Contact Bearing' },
+                              { value: 'PART-TIMKEN-TAP-01', label: 'TIMKEN-32008X — Tapered Roller Bearing' },
+                              { value: 'PART-HYD-SEAL-01', label: 'PARKER-V884-75 — Fluorocarbon Seal Kit' },
+                              { value: 'PART-FANUC-SV-03', label: 'FANUC-A06B-0223 — AC Servo Drive Motor' },
+                            ]}
+                            fullWidth
+                            size="md"
+                          />
                         </div>
 
                         <div>
@@ -922,12 +1009,13 @@ export const TechniciansView: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Field Parts Requisition Modal */}
-      {showPartsModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+      {showPartsModal && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-[#FAF9F6] border border-[#DDD9D0] rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-[#DDD9D0]">
               <div className="flex items-center gap-2.5">
@@ -947,35 +1035,39 @@ export const TechniciansView: React.FC = () => {
             <form onSubmit={handleSubmitPartRequest} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-[#1E293B] mb-1">Target Asset</label>
-                <select
+                <CustomSelect
                   value={targetMachine}
-                  onChange={(e) => setTargetMachine(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-[#DDD9D0] rounded-xl text-xs text-[#1E293B] font-medium"
-                >
-                  <option value="CNC-01">CNC-01 (5-Axis Milling Center)</option>
-                  <option value="CNC-02">CNC-02 (Heavy Duty Lathe)</option>
-                  <option value="CNC-03">CNC-03 (High-Speed Machining)</option>
-                  <option value="MIXER-01">MIXER-01 (Agitator Lubricant Mixer)</option>
-                  <option value="PUMP-01">PUMP-01 (Hydraulic Coolant Pump)</option>
-                  <option value="ROBOT-01">ROBOT-01 (6-Axis Articulated Robot)</option>
-                  <option value="PRESS-01">PRESS-01 (Stamping & Forming Press)</option>
-                  <option value="PACKAGING-01">PACKAGING-01 (Palletizer)</option>
-                </select>
+                  onChange={(val) => setTargetMachine(val)}
+                  options={[
+                    { value: 'CNC-01', label: 'CNC-01 (5-Axis Milling Center)' },
+                    { value: 'CNC-02', label: 'CNC-02 (Heavy Duty Lathe)' },
+                    { value: 'CNC-03', label: 'CNC-03 (High-Speed Machining)' },
+                    { value: 'MIXER-01', label: 'MIXER-01 (Agitator Lubricant Mixer)' },
+                    { value: 'PUMP-01', label: 'PUMP-01 (Hydraulic Coolant Pump)' },
+                    { value: 'ROBOT-01', label: 'ROBOT-01 (6-Axis Articulated Robot)' },
+                    { value: 'PRESS-01', label: 'PRESS-01 (Stamping & Forming Press)' },
+                    { value: 'PACKAGING-01', label: 'PACKAGING-01 (Palletizer)' },
+                  ]}
+                  fullWidth
+                  size="md"
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-[#1E293B] mb-1">Required Spare Part</label>
-                <select
+                <CustomSelect
                   value={requestPartId}
-                  onChange={(e) => checkPartATP(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-[#DDD9D0] rounded-xl text-xs text-[#1E293B] font-medium font-mono"
-                >
-                  <option value="PART-SKF-6205">SKF-6205-2RSH — Spindle Angular Bearing</option>
-                  <option value="PART-FAG-7210">FAG-7210-B-TVP — Support Bearing</option>
-                  <option value="PART-TIMKEN-TAP-01">TIMKEN-32008X — Gearbox Thrust Bearing</option>
-                  <option value="PART-HYD-SEAL-01">PARKER-V884-75 — Fluorocarbon Seal Kit</option>
-                  <option value="PART-FANUC-SV-03">FANUC-A06B-0223 — AC Servo Drive Motor</option>
-                </select>
+                  onChange={(val) => checkPartATP(val)}
+                  options={[
+                    { value: 'PART-SKF-6205', label: 'SKF-6205-2RSH — Spindle Angular Bearing' },
+                    { value: 'PART-FAG-7210', label: 'FAG-7210-B-TVP — Support Bearing' },
+                    { value: 'PART-TIMKEN-TAP-01', label: 'TIMKEN-32008X — Gearbox Thrust Bearing' },
+                    { value: 'PART-HYD-SEAL-01', label: 'PARKER-V884-75 — Fluorocarbon Seal Kit' },
+                    { value: 'PART-FANUC-SV-03', label: 'FANUC-A06B-0223 — AC Servo Drive Motor' },
+                  ]}
+                  fullWidth
+                  size="md"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -992,11 +1084,17 @@ export const TechniciansView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-[#1E293B] mb-1">Priority</label>
-                  <select className="w-full px-3 py-2 bg-white border border-[#DDD9D0] rounded-xl text-xs text-[#1E293B] font-medium">
-                    <option>HIGH — Machine Down</option>
-                    <option>MEDIUM — Scheduled PM</option>
-                    <option>LOW — Buffer Restock</option>
-                  </select>
+                  <CustomSelect
+                    value="HIGH"
+                    onChange={() => {}}
+                    options={[
+                      { value: 'HIGH', label: 'HIGH — Machine Down' },
+                      { value: 'MEDIUM', label: 'MEDIUM — Scheduled PM' },
+                      { value: 'LOW', label: 'LOW — Buffer Restock' },
+                    ]}
+                    fullWidth
+                    size="md"
+                  />
                 </div>
               </div>
 
@@ -1033,7 +1131,8 @@ export const TechniciansView: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

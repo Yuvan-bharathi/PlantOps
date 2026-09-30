@@ -14,6 +14,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { api } from '../services/api';
+import { PlantOpsLogo } from './common/PlantOpsLogo';
 
 interface NavbarProps {
   activeTab: string;
@@ -67,8 +68,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'maintenance', label: 'Work Orders & LOTO', icon: Wrench },
     { id: 'inventory', label: 'Inventory & ATP', icon: PackageCheck },
     { id: 'procurement', label: 'Procurement & POs', icon: ShoppingCart },
-    { id: 'review', label: 'Human Review', icon: ShieldAlert, badge: pendingReviewsCount, badgeColor: 'bg-amber-500' },
-    { id: 'domo', label: 'Domo Analytics', icon: BarChart3 }
+    { id: 'review', label: 'Human Review', icon: ShieldAlert, badge: pendingReviewsCount, badgeColor: 'bg-amber-500' }
+    // { id: 'domo', label: 'Domo Analytics', icon: BarChart3 }
   ];
 
   return (
@@ -87,8 +88,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Logo & Brand */}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-cyan-500 p-0.5 shadow-lg shadow-blue-500/20 flex items-center justify-center">
-              <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                <Cpu className="w-5 h-5 text-cyan-400" />
+              <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center text-cyan-400">
+                <PlantOpsLogo size={22} className="text-cyan-400" />
               </div>
             </div>
             <div>

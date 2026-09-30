@@ -28,33 +28,48 @@ export type IncidentEventType =
   | 'PART_ALLOCATED'
   | 'REPAIR_STARTED'
   | 'REPAIR_COMPLETED'
+  | 'WAITING_FOR_PART'
+  | 'PART_AVAILABLE'
   | 'VERIFICATION_STARTED'
   | 'VERIFICATION_PASSED'
+  | 'VERIFICATION_FAILED'
   | 'MACHINE_RUNNING'
   | 'INCIDENT_RESOLVED';
 
 export type ActorType = 'IOT_SENSOR' | 'CONDITION_MONITOR' | 'AI_ORCHESTRATOR' | 'TECHNICIAN' | 'VERIFICATION_ENGINE' | 'SYSTEM';
 
 export interface RecordEventParams {
+  eventId?: string;
   incidentId: string;
   workOrderId?: string;
   machineId: string;
+  machineCode?: string;
   eventType: IncidentEventType;
   actorType?: ActorType;
   actorId?: string;
+  technicianId?: string;
+  partId?: string;
+  statusBefore?: string;
+  statusAfter?: string;
+  quantity?: number;
+  durationSeconds?: number;
   metadata?: Record<string, any>;
 }
 
 /**
- * Records a single incident lifecycle event.
+ * Records a single incident / operational lifecycle event.
  * The event_ts is set by the DB server (CURRENT_TIMESTAMP(3)).
+ * Inserts into both incident_events and machine_operational_events with idempotency.
  * Returns the ISO-8601 UTC timestamp string assigned by the server.
  */
 export async function recordEvent(params: RecordEventParams): Promise<string | null> {
   const id = `EVT-${uuidv4().substring(0, 12).toUpperCase()}`;
+  const eventId = params.eventId || `${params.machineCode || params.machineId}:${params.eventType}:${Date.now()}`;
   const metaJson = params.metadata ? JSON.stringify(params.metadata) : null;
+  const machineCode = params.machineCode || params.machineId.replace('MCH-', '');
 
   try {
+    // 1. Insert into incident_events
     await execute(
       `INSERT INTO incident_events
          (id, incident_id, work_order_id, machine_id, event_type, actor_type, actor_id, metadata, event_ts)
@@ -71,6 +86,35 @@ export async function recordEvent(params: RecordEventParams): Promise<string | n
       ]
     );
 
+    // 2. Insert into authoritative machine_operational_events with idempotency
+    await execute(
+      `INSERT INTO machine_operational_events
+         (id, event_id, machine_id, machine_code, event_type, actor_type, actor_id, incident_id, work_order_id,
+          technician_id, part_id, status_before, status_after, quantity, duration_seconds, metadata_json, event_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(3))
+       ON DUPLICATE KEY UPDATE
+         technician_id = COALESCE(VALUES(technician_id), technician_id),
+         metadata_json = COALESCE(VALUES(metadata_json), metadata_json);`,
+      [
+        id,
+        eventId,
+        params.machineId,
+        machineCode,
+        params.eventType,
+        params.actorType || 'SYSTEM',
+        params.actorId || null,
+        params.incidentId,
+        params.workOrderId || null,
+        params.technicianId || null,
+        params.partId || null,
+        params.statusBefore || null,
+        params.statusAfter || null,
+        params.quantity || 0,
+        params.durationSeconds || null,
+        metaJson,
+      ]
+    );
+
     // Retrieve the exact server-assigned timestamp
     const rows = await query<{ ts: string }>(`SELECT event_ts AS ts FROM incident_events WHERE id = ? LIMIT 1`, [id]);
     const serverTs = rows[0]?.ts
@@ -80,9 +124,11 @@ export async function recordEvent(params: RecordEventParams): Promise<string | n
     // Broadcast event to frontend in real time
     broadcast('incident:event', {
       id,
+      eventId,
       incidentId: params.incidentId,
       workOrderId: params.workOrderId || null,
       machineId: params.machineId,
+      machineCode,
       eventType: params.eventType,
       actorType: params.actorType || 'SYSTEM',
       actorId: params.actorId || null,
@@ -146,4 +192,50 @@ export async function computeAndSaveDowntime(incidentId: string): Promise<number
     console.warn(`[EventRecorder] computeAndSaveDowntime failed: ${err.message}`);
     return null;
   }
+}
+
+export interface DowntimeBreakdown {
+  response_time_seconds: number | null;
+  travel_time_seconds: number | null;
+  loto_time_seconds: number | null;
+  inspection_time_seconds: number | null;
+  parts_wait_time_seconds: number | null;
+  repair_time_seconds: number | null;
+  verification_time_seconds: number | null;
+  total_downtime_seconds: number | null;
+}
+
+/**
+ * Computes a per-phase downtime breakdown from the incidents table's own
+ * server-stamped timestamp columns. Every duration here is derived from
+ * authoritative DB timestamps, never from Date.now().
+ */
+export async function getDowntimeBreakdown(incidentId: string): Promise<DowntimeBreakdown | null> {
+  const rows = await query<any>(
+    `SELECT detected_at, assigned_at, technician_dispatched_at, technician_arrived_at,
+            loto_started_at, loto_completed_at, inspection_started_at, inspection_completed_at,
+            repair_started_at, repair_completed_at, verification_started_at, verification_completed_at,
+            machine_running_at, downtime_seconds
+     FROM incidents WHERE id = ? LIMIT 1`,
+    [incidentId]
+  );
+  const inc = rows[0];
+  if (!inc) return null;
+
+  const diffSeconds = (a: string | null, b: string | null): number | null => {
+    if (!a || !b) return null;
+    const ms = new Date(b).getTime() - new Date(a).getTime();
+    return Number.isFinite(ms) ? Math.max(0, ms / 1000) : null;
+  };
+
+  return {
+    response_time_seconds: diffSeconds(inc.detected_at, inc.assigned_at),
+    travel_time_seconds: diffSeconds(inc.technician_dispatched_at, inc.technician_arrived_at),
+    loto_time_seconds: diffSeconds(inc.loto_started_at, inc.loto_completed_at),
+    inspection_time_seconds: diffSeconds(inc.inspection_started_at, inc.inspection_completed_at),
+    parts_wait_time_seconds: diffSeconds(inc.inspection_completed_at, inc.repair_started_at),
+    repair_time_seconds: diffSeconds(inc.repair_started_at, inc.repair_completed_at),
+    verification_time_seconds: diffSeconds(inc.verification_started_at, inc.verification_completed_at || inc.machine_running_at),
+    total_downtime_seconds: inc.downtime_seconds ?? diffSeconds(inc.detected_at, inc.machine_running_at),
+  };
 }

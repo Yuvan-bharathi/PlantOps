@@ -4,63 +4,69 @@ import {
   Building2, Cpu, Wrench, Boxes, ShoppingCart, ShieldCheck
 } from 'lucide-react';
 
+export type RoleKey = 'PLANT_ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'TECHNICIAN' | 'INVENTORY_MGMT';
+
 export interface UserProfile {
   id: string;
+  roleKey: RoleKey;
   name: string;
   role: string;
   email: string;
   avatarBg: string;
+  tagline: string;
   permissions: string[];
 }
 
 export const USER_ROLES: UserProfile[] = [
   {
-    id: 'ROLE-01',
+    id: 'ROLE-ADMIN',
+    roleKey: 'PLANT_ADMIN',
+    name: 'Alex Rivera',
+    role: 'Plant Admin',
+    email: 'admin@plantops.industrial',
+    avatarBg: 'bg-slate-800',
+    tagline: 'Industrial IT/OT & System Governance',
+    permissions: ['Full System Control', 'Broker & Cloud DB Latency', 'Audit Log Export', 'RBAC User Provisioning', 'AI Parameter Tuning']
+  },
+  {
+    id: 'ROLE-MGR',
+    roleKey: 'MANAGER',
     name: 'Priya Patel',
     role: 'Plant Operations Manager',
     email: 'priya.patel@plantops.industrial',
     avatarBg: 'bg-blue-600',
-    permissions: ['All Plant Systems', 'Executive Dashboards', 'Policy Approvals', 'ISO/OSHA Certifications']
+    tagline: 'Overall Operations & Financial Spend',
+    permissions: ['Executive OEE Dashboards', 'Domo BI Reports', 'Policy Approvals (Spend > $1,000)', 'Downtime Financial Audits']
   },
   {
-    id: 'ROLE-02',
+    id: 'ROLE-SUP',
+    roleKey: 'SUPERVISOR',
+    name: 'Marcus Vance',
+    role: 'Shopfloor Supervisor',
+    email: 'marcus.vance@plantops.industrial',
+    avatarBg: 'bg-indigo-600',
+    tagline: 'Cell Floor Operations & Workload Planning',
+    permissions: ['3D Factory Digital Twin', 'Technician Cluster Pairing', '30d/90d/120d PM Schedules', 'Autonomous Anomaly Dispatch']
+  },
+  {
+    id: 'ROLE-TECH',
+    roleKey: 'TECHNICIAN',
     name: 'Arun Kumar',
-    role: 'Lead Maintenance Engineer',
+    role: 'Certified Field Specialist',
     email: 'arun.kumar@plantops.industrial',
     avatarBg: 'bg-teal-700',
-    permissions: ['Work Order Dispatch', 'OSHA LOTO Execution', 'Vibration Analysis', 'Emergency Shutdown']
+    tagline: 'Machining Cell Specialist (CNC-01..03)',
+    permissions: ['Personalized Workstation', 'OSHA 1910.147 LOTO Verification', 'Multi-Point Inspection Checklists', 'RAG AI Manuals']
   },
   {
-    id: 'ROLE-03',
-    name: 'John Miller',
-    role: 'Senior CNC Technician',
-    email: 'john.miller@plantops.industrial',
-    avatarBg: 'bg-amber-600',
-    permissions: ['Machine Operations', 'Physical Repair Check', 'LOTO Verification', 'Telemetry Feeds']
-  },
-  {
-    id: 'ROLE-04',
+    id: 'ROLE-INV',
+    roleKey: 'INVENTORY_MGMT',
     name: 'Sarah Jenkins',
     role: 'Inventory & Materials Manager',
     email: 'sarah.jenkins@plantops.industrial',
-    avatarBg: 'bg-purple-600',
-    permissions: ['Spare Parts Register', 'ATP Stock Reservations', 'Bin Allocation', 'Safety Stock Buffers']
-  },
-  {
-    id: 'ROLE-05',
-    name: 'David Vance',
-    role: 'Autonomous Procurement Officer',
-    email: 'david.vance@plantops.industrial',
-    avatarBg: 'bg-emerald-600',
-    permissions: ['Auto-PO Validation', 'Vendor SLA Audits', 'Spend Cap Authorizations', 'Goods Inward']
-  },
-  {
-    id: 'ROLE-06',
-    name: 'System Administrator',
-    role: 'Industrial IT / OT Admin',
-    email: 'admin@plantops.industrial',
-    avatarBg: 'bg-slate-700',
-    permissions: ['MQTT Broker Config', 'AI Agent Parameters', 'Audit Log Export', 'Role Management']
+    avatarBg: 'bg-amber-600',
+    tagline: 'MRO Spares & Available-to-Promise (ATP)',
+    permissions: ['ATP Stock Allocation', 'Warehouse Bins (BAY-A/B/C)', 'Reorder Point Triggers', 'Supplier Catalog & POs']
   }
 ];
 

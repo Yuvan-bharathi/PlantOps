@@ -54,8 +54,9 @@ Real-Time Telemetry Snapshot:
 Diagnose the specific physical component degradation, determine if spare part replacement is necessary, and specify certified repair steps.`;
 
   try {
-    // 1. Groq Cloud (Ultra-Fast Inference — Llama 3.3 70B Versatile)
+    // 1. Groq Cloud (Ultra-Fast Inference — Llama 3.1 8B / 70B)
     if (groqApiKey) {
+      const groqModel = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -63,7 +64,7 @@ Diagnose the specific physical component degradation, determine if spare part re
           'Authorization': `Bearer ${groqApiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: groqModel,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
@@ -78,12 +79,9 @@ Diagnose the specific physical component degradation, determine if spare part re
         const content = data?.choices?.[0]?.message?.content;
         if (content) {
           const parsed = JSON.parse(content);
-          console.log(`[LLMService] ⚡ Groq Llama 3.3 AI Diagnosis generated for ${ctx.machineCode}: "${parsed.rootCause}"`);
+          console.log(`[LLMService] ⚡ Groq AI Diagnosis generated for ${ctx.machineCode}: "${parsed.rootCause}"`);
           return parsed as AIDiagnosisResult;
         }
-      } else {
-        const errText = await response.text();
-        console.warn(`[LLMService] Groq API error response: ${errText}`);
       }
     }
 

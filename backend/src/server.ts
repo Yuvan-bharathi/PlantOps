@@ -6,19 +6,24 @@ import { testMySqlConnection } from './db/mysql.js';
 import { testTimescaleConnection } from './db/timescale.js';
 import { initSocketIO } from './services/socket.service.js';
 import { initTelemetryService } from './services/telemetry.service.js';
+import { startDailyReconciliationEngine } from './services/powerProduction.service.js';
+import { startFleetEngine } from './services/fleet.service.js';
 import apiRouter from './routes/api.routes.js';
+import assistantRouter, { initAssistant } from './assistant/routes.js';
 
 const app = express();
 const server = http.createServer(app);
 
 // Middlewares
 app.use(cors({ origin: '*' }));
-app.use(express.json());
+// Larger limit so the assistant can accept manual uploads (base64 PDF/DOCX)
+app.use(express.json({ limit: '25mb' }));
 
 // Socket.IO
 initSocketIO(server);
 
 // Routes
+app.use('/api/assistant', assistantRouter);
 app.use('/api', apiRouter);
 
 // Health check
@@ -41,8 +46,13 @@ async function start() {
   await testMySqlConnection();
   await testTimescaleConnection();
 
-  // Start MQTT Telemetry Ingestion
+  // Start MQTT Telemetry Ingestion & Daily Reconciliation Engine
   initTelemetryService();
+  startDailyReconciliationEngine();
+  startFleetEngine();
+
+  // AI Assistant: load knowledge index, warm local models, refresh history index periodically
+  initAssistant();
 
   server.listen(config.port, () => {
     console.log(`[Server] PlantOps backend listening on port ${config.port} (http://localhost:${config.port})`);

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(node -e \"console.log\\(require.resolve\\('playwright'\\)\\)\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3002/)",
+      "Bash(curl -s http://localhost:3002/src/pages/DigitalTwinPage.tsx -o /dev/null -w \"DigitalTwinPage transform HTTP %{http_code}\\\\n\")"
+    ]
+  }
+}

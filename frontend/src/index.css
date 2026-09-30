@@ -105,3 +105,26 @@ body {
   animation: radar-scan 8s linear infinite;
 }
 
+@keyframes slideInRight {
+  from {
+    transform: translateX(110%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Hide Mapbox watermark and attribution */
+.mapboxgl-ctrl-logo,
+a.mapboxgl-ctrl-logo,
+.mapboxgl-ctrl-attrib,
+.mapboxgl-compact {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+

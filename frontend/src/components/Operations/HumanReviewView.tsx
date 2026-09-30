@@ -27,7 +27,7 @@ export const HumanReviewView: React.FC<HumanReviewViewProps> = ({ reviewItems, o
   const pastItems = reviewItems.filter(i => i.status !== 'PENDING');
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-6 w-full">
       {/* Header */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
         <div>

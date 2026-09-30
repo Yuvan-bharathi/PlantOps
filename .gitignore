@@ -48,3 +48,6 @@ tmp/
 temp/
 .cache/
 .system_generated/
+
+# Local ML model cache (downloaded on first run)
+backend/data/models/
