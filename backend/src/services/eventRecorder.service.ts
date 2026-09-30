@@ -39,25 +39,37 @@ export type IncidentEventType =
 export type ActorType = 'IOT_SENSOR' | 'CONDITION_MONITOR' | 'AI_ORCHESTRATOR' | 'TECHNICIAN' | 'VERIFICATION_ENGINE' | 'SYSTEM';
 
 export interface RecordEventParams {
+  eventId?: string;
   incidentId: string;
   workOrderId?: string;
   machineId: string;
+  machineCode?: string;
   eventType: IncidentEventType;
   actorType?: ActorType;
   actorId?: string;
+  technicianId?: string;
+  partId?: string;
+  statusBefore?: string;
+  statusAfter?: string;
+  quantity?: number;
+  durationSeconds?: number;
   metadata?: Record<string, any>;
 }
 
 /**
- * Records a single incident lifecycle event.
+ * Records a single incident / operational lifecycle event.
  * The event_ts is set by the DB server (CURRENT_TIMESTAMP(3)).
+ * Inserts into both incident_events and machine_operational_events with idempotency.
  * Returns the ISO-8601 UTC timestamp string assigned by the server.
  */
 export async function recordEvent(params: RecordEventParams): Promise<string | null> {
   const id = `EVT-${uuidv4().substring(0, 12).toUpperCase()}`;
+  const eventId = params.eventId || `${params.machineCode || params.machineId}:${params.eventType}:${Date.now()}`;
   const metaJson = params.metadata ? JSON.stringify(params.metadata) : null;
+  const machineCode = params.machineCode || params.machineId.replace('MCH-', '');
 
   try {
+    // 1. Insert into incident_events
     await execute(
       `INSERT INTO incident_events
          (id, incident_id, work_order_id, machine_id, event_type, actor_type, actor_id, metadata, event_ts)
@@ -74,6 +86,35 @@ export async function recordEvent(params: RecordEventParams): Promise<string | n
       ]
     );
 
+    // 2. Insert into authoritative machine_operational_events with idempotency
+    await execute(
+      `INSERT INTO machine_operational_events
+         (id, event_id, machine_id, machine_code, event_type, actor_type, actor_id, incident_id, work_order_id,
+          technician_id, part_id, status_before, status_after, quantity, duration_seconds, metadata_json, event_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(3))
+       ON DUPLICATE KEY UPDATE
+         technician_id = COALESCE(VALUES(technician_id), technician_id),
+         metadata_json = COALESCE(VALUES(metadata_json), metadata_json);`,
+      [
+        id,
+        eventId,
+        params.machineId,
+        machineCode,
+        params.eventType,
+        params.actorType || 'SYSTEM',
+        params.actorId || null,
+        params.incidentId,
+        params.workOrderId || null,
+        params.technicianId || null,
+        params.partId || null,
+        params.statusBefore || null,
+        params.statusAfter || null,
+        params.quantity || 0,
+        params.durationSeconds || null,
+        metaJson,
+      ]
+    );
+
     // Retrieve the exact server-assigned timestamp
     const rows = await query<{ ts: string }>(`SELECT event_ts AS ts FROM incident_events WHERE id = ? LIMIT 1`, [id]);
     const serverTs = rows[0]?.ts
@@ -83,9 +124,11 @@ export async function recordEvent(params: RecordEventParams): Promise<string | n
     // Broadcast event to frontend in real time
     broadcast('incident:event', {
       id,
+      eventId,
       incidentId: params.incidentId,
       workOrderId: params.workOrderId || null,
       machineId: params.machineId,
+      machineCode,
       eventType: params.eventType,
       actorType: params.actorType || 'SYSTEM',
       actorId: params.actorId || null,

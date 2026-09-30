@@ -12,7 +12,7 @@ interface BreadcrumbProps {
 // no intermediate stage, so the zone segment is a plain location indicator,
 // not a click target; the only navigation action is Exit Building.
 export const Breadcrumb: React.FC<BreadcrumbProps> = ({ viewLevel, zoneLabel, onExitBuilding }) => (
-  <div className="absolute top-3 left-3 flex items-center gap-2 bg-white/95 backdrop-blur-md border border-[#DDD9D0] rounded-xl px-3 py-1.5 shadow-sm text-xs">
+  <div className="absolute top-3 left-3 flex items-center gap-2 bg-white border border-[#DDD9D0] rounded-xl px-3 py-1.5 shadow-md text-xs">
     <span className="w-2 h-2 rounded-full bg-[#22A06B] animate-pulse flex-shrink-0" />
     <span className={`flex items-center gap-1 font-bold ${viewLevel === 'PLANT' ? 'text-[#1E293B]' : 'text-[#64748B]'}`}>
       <Home size={12} /> Plant Overview

@@ -6,9 +6,12 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "tsx watch src/server.ts"
+    "dev": "tsx watch src/server.ts",
+    "assistant:eval": "tsx src/assistant/eval.ts",
+    "test": "tsx src/tests/systemIntegration.test.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

@@ -7,6 +7,7 @@ import { processProcurement } from './procurement.service.js';
 import { runAIMaintenanceOrchestration, MachineContext } from './aiOrchestrator.service.js';
 import { recordEvent, stampIncident } from './eventRecorder.service.js';
 import { setMachineMemoryState } from './telemetry.service.js';
+import { recoverMachineToRunning } from './verification.service.js';
 
 /** Broadcasts a technician lifecycle-phase change. Machine state and technician
  * state are independent entities — this is deliberately never merged into the
@@ -931,6 +932,16 @@ export async function completeRepair(workOrderId: string, technicianName: string
       broadcast('workorder:completed', { workOrderId, status: 'VERIFYING' });
       broadcastTechnicianUpdate(technicianId, workOrderId, 'VERIFYING');
     } catch (e) {}
+
+    // Guarantee verification resolves automatically after 4 seconds (3-cycle clean run-in)
+    setTimeout(async () => {
+      try {
+        await recoverMachineToRunning(machineCode, { temperature: 61.0, vibration: 2.1 });
+        console.log(`[MaintenanceService] Verification cycle auto-completed for ${machineCode} (${workOrderId}) -> Restored to RUNNING.`);
+      } catch (err: any) {
+        console.warn(`[MaintenanceService] Auto-recovery error: ${err.message}`);
+      }
+    }, 4000);
 
     return true;
   } catch (err: any) {

@@ -114,6 +114,10 @@ export interface SparePartInventory {
   quantity_on_hand: number;
   reserved_quantity: number;
   available_to_promise: number;
+  safety_stock?: number;
+  min_reorder_point?: number;
+  lead_time_days?: number;
+  supplier_name?: string;
 }
 
 export interface PurchaseOrder {
@@ -179,3 +183,99 @@ export interface DomoKPIs {
   active_faults: number;
   closed_loop_resolutions: number;
 }
+
+export interface PlantPowerState {
+  status: 'ON' | 'OFF' | 'STARTING' | 'ESTOP';
+  voltage: number;
+  current_amps: number;
+  frequency_hz: number;
+  active_alarm: boolean;
+  alarm_acknowledged: boolean;
+  main_mcc_status: 'HEALTHY' | 'WARNING' | 'TRIPPED';
+  total_load_kw: number;
+  last_energized_at: string | null;
+  last_deenergized_at: string | null;
+}
+
+export interface MachinePowerBreaker {
+  machine_id: string;
+  machine_code: string;
+  machine_name: string;
+  cell_name: string;
+  breaker_status: 'CLOSED' | 'OPEN' | 'TRIPPED' | 'LOTO_LOCKED';
+  voltage: number;
+  current_amps: number;
+  frequency_hz: number;
+  target_rate_per_hour: number;
+  cycle_time_seconds: number;
+  power_status: 'ON' | 'OFF';
+  runtime_status: 'RUNNING' | 'FAULT' | 'MAINTENANCE' | 'VERIFYING' | 'IDLE' | 'OFF';
+  actual_pieces: number;
+  target_pieces: number;
+  missed_pieces: number;
+}
+
+export interface MachineDailySummary {
+  id: string;
+  machine_id: string;
+  machine_code: string;
+  machine_name: string;
+  cell_name: string;
+  date: string;
+  power_on_seconds: number;
+  runtime_seconds: number;
+  idle_seconds: number;
+  downtime_seconds: number;
+  target_pieces: number;
+  actual_pieces: number;
+  good_pieces: number;
+  scrap_pieces: number;
+  missed_pieces: number;
+  fault_count: number;
+  warning_count: number;
+  availability_pct: number;
+  status: string;
+  assigned_technician?: string;
+  first_power_on_at?: string;
+  last_power_off_at?: string;
+  rate_per_hour?: number;
+  timeline_segments?: MachineTimelineSegment[];
+}
+
+// Where a day's history comes from: live power ledger (today), recorded ledger (past),
+// persisted daily summary rows, or simulated demo history for days before recording began.
+export type DailyDataSource = 'LIVE' | 'RECORDED' | 'DB_SUMMARY' | 'SIMULATED';
+
+export interface MachineDayEvent {
+  time: string;
+  timestamp: string;
+  type: string;
+  category: 'POWER' | 'PRODUCTION' | 'IOT' | 'AI' | 'TECHNICIAN' | 'INVENTORY' | 'RECOVERY';
+  title: string;
+  description: string;
+  status: 'OPTIMAL' | 'WARN' | 'CRITICAL' | 'COMPLETED' | 'IN_PROGRESS' | 'INFO';
+  actor?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface MachineTimelineSegment {
+  startTime: string;
+  endTime: string;
+  startHour: number;
+  endHour: number;
+  status: 'RUNNING' | 'WARNING' | 'FAULT' | 'ESTOP' | 'MAINTENANCE' | 'VERIFYING' | 'IDLE' | 'OFF' | 'NO_DATA';
+  label: string;
+}
+
+export interface MonthlyCalendarDay {
+  day: number;
+  date: string;
+  machinesRunning: number;
+  faultsCount: number;
+  repairsCount: number;
+  productionPieces: number;
+  missedPieces: number;
+  availabilityPct: number;
+  source?: DailyDataSource | 'FUTURE';
+}
+

@@ -9,6 +9,8 @@ import { runAIDiagnosis } from './aiDiagnosis.service.js';
 import { createWorkOrderAndDispatch } from './maintenance.service.js';
 import { processVerificationReading } from './verification.service.js';
 import { recordEvent, stampIncident } from './eventRecorder.service.js';
+import { setLatestTelemetry, setMachineLiveState } from '../db/redis.js';
+import { CONDITION_LIMITS } from './machineState.service.js';
 
 export interface TelemetryPayload {
   machineId: string;
@@ -35,6 +37,53 @@ export function clearActiveIncident(machineCode: string) {
   delete isDiagnosingMap[machineCode];
   machineStateMemory[machineCode] = 'RUNNING';
   console.log(`[TelemetryService] Reset active incident state for ${machineCode}. Ready for next single-machine fault injection.`);
+}
+
+export async function injectFaultScenario(
+  machineCode: string,
+  faultType?: string,
+  intensity = 1.0,
+  scenarioId?: string
+): Promise<TelemetryPayload> {
+  clearActiveIncident(machineCode);
+  lastDiagnosisTimestamp[machineCode] = 0;
+
+  const codeUpper = machineCode.toUpperCase();
+  let vibration = 8.85 * intensity;
+  let temperature = 82.4;
+  let current = 17.5;
+  let rpm = 2800;
+  let pressure = 5.2;
+
+  if (codeUpper.includes('PUMP')) {
+    pressure = 2.1; // Hydraulic pressure breach
+    vibration = 8.2;
+    temperature = 76.5;
+  } else if (codeUpper.includes('ROBOT')) {
+    current = 19.4; // Servo drive current surge
+    vibration = 7.95;
+    temperature = 81.2;
+  } else if (codeUpper.includes('MIXER')) {
+    temperature = 84.5; // Gearbox thermal runaway
+    vibration = 8.1;
+  } else {
+    vibration = Math.max(8.0, 8.85 * intensity);
+    temperature = Math.max(80.5, 82.4 * intensity);
+  }
+
+  const payload: TelemetryPayload = {
+    machineId: machineCode,
+    timestamp: new Date().toISOString(),
+    temperature: parseFloat(temperature.toFixed(1)),
+    vibration: parseFloat(vibration.toFixed(2)),
+    current: parseFloat(current.toFixed(1)),
+    rpm,
+    pressure: parseFloat(pressure.toFixed(1)),
+    scenarioId: scenarioId || `${machineCode}-ANOMALY`
+  };
+
+  await processTelemetry(payload);
+  return payload;
 }
 
 /**
@@ -88,13 +137,72 @@ export function initTelemetryService() {
       mqttErrorLogged = true;
     }
   });
+
+  const KNOWN_MACHINES = [
+    'CNC-01', 'CNC-02', 'CNC-03', 'CNC-04', 'CNC-05', 'CNC-06',
+    'ROBOT-01', 'ROBOT-02', 'ROBOT-03', 'ROBOT-04', 'ROBOT-05',
+    'MIXER-01', 'MIXER-02', 'MIXER-03', 'MIXER-04',
+    'ASMB-01', 'ASMB-02', 'ASMB-03', 'ASMB-04',
+    'PACK-01', 'PACK-02', 'PACK-03', 'PACK-04',
+    'MAINT-01', 'MAINT-02'
+  ];
+
+  // Start continuous simulated telemetry stream (1.8s interval)
+  setInterval(async () => {
+    try {
+      for (const machineCode of KNOWN_MACHINES) {
+        const currentStatus = machineStateMemory[machineCode] || 'RUNNING';
+        
+        // If verifying, emit clean nominal baseline telemetry to complete verification cycles
+        if (currentStatus === 'VERIFYING') {
+          const payload: TelemetryPayload = {
+            machineId: machineCode,
+            timestamp: new Date().toISOString(),
+            temperature: parseFloat((61.0 + (Math.random() * 0.8 - 0.4)).toFixed(1)),
+            vibration: parseFloat((1.90 + (Math.random() * 0.15 - 0.08)).toFixed(2)),
+            current: 12.4,
+            rpm: 2800,
+            pressure: 5.2
+          };
+          await processTelemetry(payload);
+        } else if (currentStatus === 'RUNNING') {
+          // Send occasional stream ticks so live charts breathe
+          if (Math.random() > 0.4) {
+            const payload: TelemetryPayload = {
+              machineId: machineCode,
+              timestamp: new Date().toISOString(),
+              temperature: parseFloat((61.8 + (Math.random() * 1.2 - 0.6)).toFixed(1)),
+              vibration: parseFloat((2.05 + (Math.random() * 0.2 - 0.1)).toFixed(2)),
+              current: parseFloat((12.5 + (Math.random() * 0.3 - 0.15)).toFixed(1)),
+              rpm: 2800,
+              pressure: 5.2
+            };
+            broadcast('telemetry:stream', payload);
+          }
+        }
+      }
+    } catch (e: any) {
+      // Ignore background interval errors
+    }
+  }, 1800);
 }
 
 export async function processTelemetry(data: TelemetryPayload) {
   const machineCode = data.machineId;
+  const currentStatus = machineStateMemory[machineCode] || 'RUNNING';
 
-  // 1. Broadcast live sensor data over WebSocket
+  // 1. Broadcast live sensor data over WebSocket & Cache to Redis (10m sliding TTL)
   broadcast('telemetry:stream', data);
+  setLatestTelemetry(machineCode, data, 600).catch(() => {});
+  setMachineLiveState(machineCode, {
+    status: currentStatus,
+    lastSeen: data.timestamp,
+    temperature: data.temperature,
+    vibration: data.vibration,
+    current: data.current,
+    rpm: data.rpm,
+    pressure: data.pressure
+  }).catch(() => {});
 
   // 2. Persist to TimescaleDB (async non-blocking)
   try {
@@ -111,7 +219,6 @@ export async function processTelemetry(data: TelemetryPayload) {
   }
 
   // 3. Check if machine is currently in VERIFYING state
-  const currentStatus = machineStateMemory[machineCode] || 'RUNNING';
   if (currentStatus === 'VERIFYING') {
     await processVerificationReading(machineCode, {
       temperature: data.temperature,
@@ -140,11 +247,12 @@ export async function processTelemetry(data: TelemetryPayload) {
   let isFault = false;
   let isWarning = false;
 
-  if (data.vibration > 7.5 || data.temperature > 80.0 || (data.pressure > 0 && data.pressure < 3.0) || data.current > 18.0) {
+  const L = CONDITION_LIMITS;
+  if (data.vibration > L.vibration.fault || data.temperature > L.temperature.fault || (data.pressure > 0 && data.pressure < L.pressure.fault) || data.current > L.current.fault) {
     evaluatedStatus = 'FAULT';
     healthScore = Math.max(25, Math.round(100 - (data.vibration * 7.5)));
     isFault = true;
-  } else if (data.vibration > 5.0 || data.temperature > 70.0 || (data.pressure > 0 && data.pressure < 4.5) || data.current > 15.0) {
+  } else if (data.vibration > L.vibration.warning || data.temperature > L.temperature.warning || (data.pressure > 0 && data.pressure < L.pressure.warning) || data.current > L.current.warning) {
     evaluatedStatus = 'WARNING';
     healthScore = Math.max(65, Math.round(100 - (data.vibration * 5.0)));
     isWarning = true;

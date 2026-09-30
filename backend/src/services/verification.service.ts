@@ -1,4 +1,5 @@
 import { execute, query } from '../db/mysql.js';
+import { getLocalDb, saveLocalDb } from '../db/localDb.js';
 import { recordAuditLog } from './audit.service.js';
 import { broadcast } from './socket.service.js';
 import { clearActiveIncident, setMachineMemoryState } from './telemetry.service.js';
@@ -113,13 +114,13 @@ async function failVerification(machineId: string, telemetry: { temperature: num
   }
 }
 
-async function recoverMachineToRunning(machineId: string, telemetry: { temperature: number; vibration: number }) {
+export async function recoverMachineToRunning(machineId: string, telemetry: { temperature: number; vibration: number } = { temperature: 60.0, vibration: 2.0 }) {
   try {
     // 1. Update Machine to RUNNING with 98% Health. Runtime clock restarts now
     // (last_running_started_at), and the downtime clock is cleared.
     await execute(
       `UPDATE machines
-         SET status = 'RUNNING', health_score = 98,
+         SET status = 'RUNNING', health_score = 99,
              last_running_started_at = CURRENT_TIMESTAMP(3), downtime_started_at = NULL
        WHERE id = ? OR code = ?`,
       [machineId, machineId]
@@ -153,9 +154,11 @@ async function recoverMachineToRunning(machineId: string, telemetry: { temperatu
          AND downtime_seconds IS NULL`,
       [machinePk]
     );
+    let lastComputedDowntime: number | null = null;
     for (const row of resolvedRows) {
       const downtime = await computeAndSaveDowntime(row.id);
       if (downtime !== null) {
+        lastComputedDowntime = downtime;
         console.log(`[VerificationService] Downtime for ${row.id}: ${downtime.toFixed(3)}s`);
       }
       // Record VERIFICATION_PASSED + MACHINE_RUNNING + INCIDENT_RESOLVED events
@@ -211,6 +214,32 @@ async function recoverMachineToRunning(machineId: string, telemetry: { temperatu
     // 5. Reset in-memory anomaly debounce lock
     clearActiveIncident(machineId);
 
+    // Sync LocalDB Fallback
+    try {
+      const localDb = getLocalDb();
+      if (localDb.machines) {
+        const m = localDb.machines.find((x: any) => x.id === machineId || x.code === machineId);
+        if (m) {
+          m.status = 'RUNNING';
+          m.health_score = 99;
+        }
+      }
+      if (localDb.work_orders) {
+        localDb.work_orders.forEach((w: any) => {
+          if (w.machine_id === machinePk || w.machine_id === machineId) {
+            w.status = 'COMPLETED';
+            w.technician_phase = 'AVAILABLE';
+          }
+        });
+      }
+      if (localDb.technicians) {
+        localDb.technicians.forEach((t: any) => {
+          t.status = 'AVAILABLE';
+        });
+      }
+      saveLocalDb();
+    } catch (e) {}
+
     // 6. Audit Log
     await recordAuditLog({
       actor: 'AUTOMATED_VERIFICATION_ENGINE',
@@ -230,7 +259,11 @@ async function recoverMachineToRunning(machineId: string, telemetry: { temperatu
       message: 'Post-repair verification passed! Machine back online in RUNNING state.'
     });
 
-    broadcast('incident:resolved', { machineId });
+    broadcast('incident:resolved', {
+      machineId,
+      downtimeSeconds: lastComputedDowntime,
+      timestamp: new Date().toISOString()
+    });
   } catch (err: any) {
     console.error(`[VerificationService] recoverMachineToRunning error: ${err.message}`);
   }
