@@ -76,20 +76,17 @@ jobs:
             
             # 3. Build & update Backend
             cd /home/ubuntu/PlantOps/backend
-            npm install --production=false
             npm run build
             pm2 reload plantops-backend --update-env || pm2 start dist/server.js --name "plantops-backend"
             
             # 4. Build & update Simulator
             cd /home/ubuntu/PlantOps/simulator
-            npm install --production=false
             npm run build
             pm2 reload plantops-simulator --update-env || pm2 start dist/index.js --name "plantops-simulator"
             
             # 5. Build Frontend
             cd /home/ubuntu/PlantOps/frontend
             echo "VITE_MAPBOX_TOKEN=${{ secrets.VITE_MAPBOX_TOKEN }}" > .env
-            npm install --production=false
             npm run build
             
             # 6. Ensure Permissions & Reload Nginx
