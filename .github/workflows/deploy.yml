@@ -66,8 +66,9 @@ jobs:
             # 1. Update source code
             cd /home/ubuntu/PlantOps
             git fetch origin
+            git reset --hard HEAD
             git checkout ${{ github.ref_name }}
-            git pull origin ${{ github.ref_name }}
+            git reset --hard origin/${{ github.ref_name }}
             
             # 2. Ensure Docker dependencies are running
             sudo docker update --restart unless-stopped plantops-redis plantops-mosquitto 2>/dev/null || true
