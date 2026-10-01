@@ -1,0 +1,102 @@
+name: PlantOps CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - prod
+      - master
+  workflow_dispatch:
+
+jobs:
+  ci-build:
+    name: Build & Verify Stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package.json
+            frontend/package.json
+            simulator/package.json
+
+      - name: Build Backend
+        run: |
+          cd backend
+          npm ci || npm install
+          npm run build
+
+      - name: Build Simulator
+        run: |
+          cd simulator
+          npm ci || npm install
+          npm run build
+
+      - name: Build Frontend
+        env:
+          VITE_MAPBOX_TOKEN: ${{ secrets.VITE_MAPBOX_TOKEN }}
+        run: |
+          cd frontend
+          npm ci || npm install
+          npm run build
+
+  deploy:
+    name: Deploy to AWS EC2
+    needs: ci-build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Execute Remote SSH Deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST || '13.61.62.35' }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 120s
+          script_stop: true
+          script: |
+            echo "🚀 Starting Automated Deployment on EC2..."
+            
+            # 1. Update source code
+            cd /home/ubuntu/PlantOps
+            git fetch origin
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
+            
+            # 2. Ensure Docker dependencies are running
+            sudo docker update --restart unless-stopped plantops-redis plantops-mosquitto 2>/dev/null || true
+            sudo docker-compose up -d mosquitto redis
+            
+            # 3. Build & update Backend
+            cd /home/ubuntu/PlantOps/backend
+            npm install --production=false
+            npm run build
+            pm2 reload plantops-backend --update-env || pm2 start dist/server.js --name "plantops-backend"
+            
+            # 4. Build & update Simulator
+            cd /home/ubuntu/PlantOps/simulator
+            npm install --production=false
+            npm run build
+            pm2 reload plantops-simulator --update-env || pm2 start dist/index.js --name "plantops-simulator"
+            
+            # 5. Build Frontend
+            cd /home/ubuntu/PlantOps/frontend
+            echo "VITE_MAPBOX_TOKEN=${{ secrets.VITE_MAPBOX_TOKEN }}" > .env
+            npm install --production=false
+            npm run build
+            
+            # 6. Ensure Permissions & Reload Nginx
+            sudo chmod 755 /home/ubuntu
+            sudo chmod -R 755 /home/ubuntu/PlantOps/frontend/dist
+            sudo nginx -t && sudo systemctl reload nginx
+            
+            # 7. Persist PM2 Process List
+            pm2 save
+            
+            echo "✅ Deployment completed successfully! Live at http://${{ secrets.EC2_HOST || '13.61.62.35' }}"

@@ -1,5 +1,4 @@
-// Client for the PlantOps AI Assistant (/api/assistant)
-const BASE = 'http://localhost:4000/api/assistant';
+const BASE = ((import.meta as any).env?.VITE_API_URL as string) ? `${(import.meta as any).env.VITE_API_URL}/assistant` : '/api/assistant';
 
 export type ActionType = 'CREATE_WORK_ORDER' | 'RESERVE_PART' | 'CREATE_PURCHASE_ORDER';
 export type ActionStatus = 'PENDING' | 'EXECUTED' | 'REJECTED' | 'FAILED';

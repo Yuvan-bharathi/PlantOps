@@ -51,3 +51,4 @@ temp/
 
 # Local ML model cache (downloaded on first run)
 backend/data/models/
+*.tar.gz

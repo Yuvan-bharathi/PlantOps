@@ -1,8 +1,12 @@
 import { io } from 'socket.io-client';
 
-const API_BASE = 'http://localhost:4000/api';
+const API_BASE = ((import.meta as any).env?.VITE_API_URL as string) || '/api';
 
-export const socket = io('http://localhost:4000', {
+const SOCKET_URL = typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+  ? window.location.origin
+  : 'http://localhost:4000';
+
+export const socket = io(SOCKET_URL, {
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 1000
