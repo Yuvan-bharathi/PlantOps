@@ -1446,20 +1446,44 @@ export const ProductionLogisticsView: React.FC<ProductionLogisticsViewProps> = (
 
               <div className="grid grid-cols-5 gap-2">
                 {Array.from({ length: 10 }).map((_, idx) => {
-                  const isFilled = idx < currentPallet.cartonsCount;
+                  const fullCartonThreshold = (idx + 1) * 24;
+                  const prevCartonThreshold = idx * 24;
+                  const isFull = currentPallet.piecesCount >= fullCartonThreshold;
+                  const isCurrentPacking = currentPallet.piecesCount > prevCartonThreshold && currentPallet.piecesCount < fullCartonThreshold;
+                  const currentPiecesInCarton = isFull 
+                    ? 24 
+                    : isCurrentPacking 
+                    ? currentPallet.piecesCount - prevCartonThreshold 
+                    : 0;
+
                   return (
                     <div 
                       key={idx}
                       className={`p-2 rounded-lg border text-center transition-all ${
-                        isFilled 
+                        isFull 
                           ? 'bg-blue-600 text-white border-blue-700 shadow-xs' 
+                          : isCurrentPacking
+                          ? 'bg-blue-50 text-blue-900 border-blue-400 ring-2 ring-blue-400/30'
                           : 'bg-[#FAF9F6] text-[#64748B] border-[#DDD9D0]'
                       }`}
                     >
-                      <div className="text-[9px] font-bold uppercase">Carton {idx + 1}</div>
-                      <div className="text-[10px] font-mono font-bold mt-0.5">
-                        {isFilled ? '24 pcs' : 'Empty'}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-bold uppercase">Carton {idx + 1}</span>
+                        {isCurrentPacking && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
+                        )}
                       </div>
+                      <div className="text-[10px] font-mono font-bold mt-0.5">
+                        {isFull ? '24 / 24 pcs' : isCurrentPacking ? `${currentPiecesInCarton} / 24 pcs` : 'Empty (0/24)'}
+                      </div>
+                      {isCurrentPacking && (
+                        <div className="w-full bg-blue-200 h-1 rounded-full mt-1.5 overflow-hidden">
+                          <div 
+                            className="bg-blue-600 h-full transition-all duration-300"
+                            style={{ width: `${(currentPiecesInCarton / 24) * 100}%` }}
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
