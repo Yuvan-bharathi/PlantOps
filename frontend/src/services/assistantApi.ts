@@ -109,6 +109,9 @@ export const assistantApi = {
     const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]).toString();
     return json<ProposedAction[]>(fetch(`${BASE}/actions${q ? `?${q}` : ''}`));
   },
+  /** Propose a work order from another page (e.g. Ops Twin); it waits for human approval like assistant proposals. */
+  proposeWorkOrder: (body: { machineCode: string; symptom: string; priority: string; requestedBy: { name: string; role: string }; source?: string }) =>
+    json<ProposedAction>(post('/actions/work-order', body)),
   decide: (id: string, decision: 'approve' | 'reject', decider: { name: string; role: string; roleKey: string }, note?: string) =>
     json<ProposedAction>(post(`/actions/${id}/decision`, { decision, decider, note })),
   knowledgeStatus: () => json<IndexStatus>(fetch(`${BASE}/knowledge/status`)),

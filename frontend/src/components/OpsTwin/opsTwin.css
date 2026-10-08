@@ -1,0 +1,84 @@
+/* Ops Twin page only: dark panel theme + full-screen sizing. Scoped under .ops-twin. */
+
+.ops-twin:fullscreen {
+  height: 100vh !important;
+}
+
+.ops-twin.ops-dark {
+  color-scheme: dark;
+}
+
+/* surfaces */
+.ops-dark .bg-white,
+.ops-dark .bg-white\/95,
+.ops-dark .bg-white\/97,
+.ops-dark .bg-white\/98 {
+  background-color: rgba(15, 23, 42, 0.94) !important;
+}
+.ops-dark .bg-slate-50,
+.ops-dark .bg-slate-50\/50 {
+  background-color: rgba(30, 41, 59, 0.85) !important;
+}
+.ops-dark .bg-slate-100 {
+  background-color: #1e293b !important;
+}
+.ops-dark .bg-slate-200,
+.ops-dark .hover\:bg-slate-200:hover {
+  background-color: #334155 !important;
+}
+.ops-dark .hover\:bg-slate-50:hover,
+.ops-dark .hover\:bg-slate-100:hover {
+  background-color: #273449 !important;
+}
+.ops-dark .bg-blue-50,
+.ops-dark .hover\:bg-blue-50:hover,
+.ops-dark .hover\:bg-blue-50\/50:hover,
+.ops-dark .hover\:bg-blue-100:hover {
+  background-color: rgba(37, 99, 235, 0.18) !important;
+}
+.ops-dark .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.16) !important;
+}
+.ops-dark .bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.16) !important;
+}
+.ops-dark .bg-red-50 {
+  background-color: rgba(239, 68, 68, 0.16) !important;
+}
+
+/* text */
+.ops-dark .text-slate-900,
+.ops-dark .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+.ops-dark .text-slate-700,
+.ops-dark .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+.ops-dark .text-slate-500 {
+  color: #94a3b8 !important;
+}
+.ops-dark .text-slate-400 {
+  color: #7c8aa3 !important;
+}
+
+/* borders + rings */
+.ops-dark .border-white\/70,
+.ops-dark .border-slate-100,
+.ops-dark .border-slate-200 {
+  border-color: rgba(148, 163, 184, 0.18) !important;
+}
+.ops-dark .ring-blue-200 {
+  --tw-ring-color: rgba(59, 130, 246, 0.45) !important;
+}
+.ops-dark .bg-white.shadow-sm {
+  background-color: #334155 !important;
+}
+.ops-dark input,
+.ops-dark textarea {
+  color: #f1f5f9;
+}
+.ops-dark kbd {
+  background-color: #1e293b !important;
+  color: #cbd5e1 !important;
+}

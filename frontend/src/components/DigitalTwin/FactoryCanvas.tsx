@@ -287,7 +287,7 @@ const EmergencyStopButton: React.FC<{ position: [number, number, number] }> = ({
 // the base's exposed step) + piston-round (roof turret) + a procedural
 // coolant hose + cable conduit (simple pipes/cables stay procedural per the
 // asset-pipeline rule; the enclosure itself is the "complex equipment" GLB).
-const CNCMachineMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; code?: string }> = ({
+export const CNCMachineMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; code?: string }> = ({
   color, isSelected, isFault, code
 }) => {
   // Small per-instance variation ("small visual details") — every other CNC
@@ -356,7 +356,7 @@ const CNCMachineMesh: React.FC<{ color: string; isSelected: boolean; isFault: bo
 // no visual gain), but the stationary base/turret/controller cabinet now use
 // real Factory Kit pieces instead of bare cylinders/boxes, plus a real E-stop.
 // ─────────────────────────────────────────────────────────────────────────────
-const RobotArmMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; pose?: number }> = ({
+export const RobotArmMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; pose?: number }> = ({
   color, isSelected, isFault, pose = 0
 }) => {
   const baseWaistRef = useRef<THREE.Group>(null);
@@ -617,7 +617,7 @@ const RobotArmMesh: React.FC<{ color: string; isSelected: boolean; isFault: bool
 // Hydraulic Pump — machine.glb body/motor + real pipe-kit inlet/outlet/valve,
 // procedural mounting base/gauge/cable (simple, repeated details).
 // ─────────────────────────────────────────────────────────────────────────────
-const PumpMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean }> = ({ color, isSelected, isFault }) => {
+export const PumpMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean }> = ({ color, isSelected, isFault }) => {
   const bodyTint = isSelected ? '#6B7C93' : MACHINE_BODY_TINT;
   return (
     <group scale={1.4}>
@@ -667,7 +667,7 @@ const PumpMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean 
 // assembly + a real inspection-hatch door, keeping the existing animated
 // procedural shaft/legs (simple, repeated — stays procedural by design).
 // ─────────────────────────────────────────────────────────────────────────────
-const MixerMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean }> = ({ color, isSelected, isFault }) => {
+export const MixerMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean }> = ({ color, isSelected, isFault }) => {
   const agitatorRef = useRef<THREE.Mesh>(null);
   useFrame((state) => {
     if (agitatorRef.current) agitatorRef.current.rotation.y = state.clock.elapsedTime * 2.5;
@@ -730,7 +730,7 @@ const MixerMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean
 // Hydraulic Press — structure-high frame + a real piston as the hydraulic
 // cylinder/ram, machine-window-bar as the barred safety guard.
 // ─────────────────────────────────────────────────────────────────────────────
-const PressMesh: React.FC<{ color: string; isFault: boolean }> = ({ color, isFault }) => (
+export const PressMesh: React.FC<{ color: string; isFault: boolean }> = ({ color, isFault }) => (
   <group scale={1.3}>
     {/* Base + press bed */}
     <mesh position={[0, 0.25, 0]} castShadow>
@@ -793,7 +793,7 @@ const PressMesh: React.FC<{ color: string; isFault: boolean }> = ({ color, isFau
 // and a non-uniform scale stretches it into a proper slender standing tank
 // instead of the squat horizontal barrel it is by default.
 // ─────────────────────────────────────────────────────────────────────────────
-const ProcessingUnitMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; code?: string }> = ({ color, isSelected, isFault, code }) => {
+export const ProcessingUnitMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; code?: string }> = ({ color, isSelected, isFault, code }) => {
   const mirror = ((code ? parseInt(code.replace(/\D/g, ''), 10) : 0) % 2) === 1 ? -1 : 1;
   const bodyTint = isSelected ? '#6B7C93' : MACHINE_BODY_TINT;
   return (
@@ -870,7 +870,7 @@ const ProcessingUnitMesh: React.FC<{ color: string; isSelected: boolean; isFault
 // station rather than a bare table. Even/odd instances mirror their
 // conveyor/cabinet side, matching the CNC/Processing variation pattern.
 // ─────────────────────────────────────────────────────────────────────────────
-const AssemblyWorkstationMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; code?: string }> = ({ color, isSelected, isFault, code }) => {
+export const AssemblyWorkstationMesh: React.FC<{ color: string; isSelected: boolean; isFault: boolean; code?: string }> = ({ color, isSelected, isFault, code }) => {
   const mirror = ((code ? parseInt(code.replace(/\D/g, ''), 10) : 0) % 2) === 1 ? -1 : 1;
   const bodyTint = isSelected ? '#6B7C93' : MACHINE_BODY_TINT;
   return (
@@ -925,7 +925,7 @@ const AssemblyWorkstationMesh: React.FC<{ color: string; isSelected: boolean; is
 // ─────────────────────────────────────────────────────────────────────────────
 // Packaging Machine (Kenney Factory Kit Straight Flow Asset Assemblies)
 // ─────────────────────────────────────────────────────────────────────────────
-const PackagingMachineMesh: React.FC<{ color: string; isSelected: boolean; isFault?: boolean; code?: string }> = ({
+export const PackagingMachineMesh: React.FC<{ color: string; isSelected: boolean; isFault?: boolean; code?: string }> = ({
   color,
   isSelected,
   isFault = false,
@@ -1066,7 +1066,7 @@ const PackagingMachineMesh: React.FC<{ color: string; isSelected: boolean; isFau
 // ─────────────────────────────────────────────────────────────────────────────
 // Maintenance Bench / Test Station
 // ─────────────────────────────────────────────────────────────────────────────
-const MaintenanceBenchMesh: React.FC<{ color: string; isSelected: boolean; variant?: 'bench' | 'test' }> = ({
+export const MaintenanceBenchMesh: React.FC<{ color: string; isSelected: boolean; variant?: 'bench' | 'test' }> = ({
   color, isSelected, variant = 'bench'
 }) => (
   <group>

@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardPage } from './pages/DashboardPage';
 import { DigitalTwinPage } from './pages/DigitalTwinPage';
+import { OpsTwinView } from './components/OpsTwin/OpsTwinView';
 import { MachinesView } from './components/Operations/MachinesView';
 import { IoTDevicesView } from './components/Operations/IoTDevicesView';
 import { TelemetryView } from './components/Operations/TelemetryView';
@@ -38,10 +39,11 @@ import {
 import { Activity, X } from 'lucide-react';
 
 // Screens that render live machine state and need the 3s fallback poll
-const MACHINE_POLL_TABS = new Set(['dashboard', 'twin', 'machines', 'iot', 'telemetry', 'ai']);
+const MACHINE_POLL_TABS = new Set(['dashboard', 'twin', 'ops-twin', 'machines', 'iot', 'telemetry', 'ai']);
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  // a shared Ops Twin link (#ops-twin?...) opens that page directly
+  const [activeTab, setActiveTab] = useState<string>(() => (window.location.hash.startsWith('#ops-twin') ? 'ops-twin' : 'dashboard'));
   const activeTabRef = useRef(activeTab);
   // Truck to focus when opening Live Fleet Tracking from the dashboard ('TRK-001#<nonce>')
   const [fleetFocus, setFleetFocus] = useState<string | null>(null);
@@ -394,6 +396,8 @@ export const App: React.FC = () => {
       {/* Main Container */}
       <div className={`flex-1 flex flex-col ${contentMargin} transition-all duration-200 min-w-0 bg-[#F3F1EC]`}>
         {/* Header with Global Search */}
+        {/* Ops Twin has its own header bar, so the global top navbar is hidden on that page */}
+        {activeTab !== 'ops-twin' && (
         <div className={`transition-all duration-300 ${activeTab === 'fleet' && isHeaderHidden ? '-mt-14 opacity-0 pointer-events-none' : 'mt-0 opacity-100'}`}>
           <Header
             activeTab={activeTab}
@@ -410,9 +414,10 @@ export const App: React.FC = () => {
             inventory={inventory}
           />
         </div>
+        )}
 
         {/* Dynamic Page Views: 17 Complete Operational Pages */}
-        <main className={`flex-1 overflow-y-auto w-full transition-all duration-300 ${activeTab === 'fleet' && isHeaderHidden ? 'pt-0' : 'pt-14'}`}>
+        <main className={`flex-1 overflow-y-auto w-full transition-all duration-300 ${(activeTab === 'fleet' && isHeaderHidden) || activeTab === 'ops-twin' ? 'pt-0' : 'pt-14'}`}>
           {/* Page 1: Login / Role-Based Access Control */}
           {activeTab === 'login' && (
             <LoginPage
@@ -504,6 +509,11 @@ export const App: React.FC = () => {
               onRefresh={refreshAll}
               activeFaultsCount={activeFaultsCount}
             />
+          )}
+
+          {/* Page 3b: Ops Twin (cell-level operational twin, beta) */}
+          {activeTab === 'ops-twin' && (
+            <OpsTwinView machines={machines} workOrders={workOrders} incidents={incidents} telemetryMap={telemetryMap} currentUser={currentUser} />
           )}
 
           {/* Page 4: Machines Register */}

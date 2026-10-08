@@ -4,7 +4,8 @@
 import { Router, Request, Response } from 'express';
 import { runAgent, AgentEvent } from './agent.js';
 import { addMessage, createSession, deleteSession, getMessages, getSession, listSessions, setFeedback } from './memory.js';
-import { decideAction, listActions, ActionStatus, ForbiddenError } from './actions.js';
+import { decideAction, listActions, proposeAction, ActionStatus, ForbiddenError } from './actions.js';
+import { query } from '../db/mysql.js';
 import { ensureLoaded, getIndexStatus, rebuildIndex, searchKnowledge } from './knowledge/store.js';
 import { warmUpModels } from './models.js';
 
@@ -96,6 +97,31 @@ router.get('/actions', async (req, res) => {
       status: req.query.status ? (String(req.query.status).toUpperCase() as ActionStatus) : undefined,
       sessionId: req.query.sessionId ? String(req.query.sessionId) : undefined,
     }));
+  } catch (e) { fail(res, e); }
+});
+
+// Work order requested from another page (e.g. Ops Twin): same human approval flow as the assistant
+router.post('/actions/work-order', async (req, res) => {
+  const code = String(req.body?.machineCode || '').trim().toUpperCase();
+  const symptom = String(req.body?.symptom || '').trim();
+  const priority = String(req.body?.priority || 'HIGH').toUpperCase();
+  const requester = req.body?.requestedBy || {};
+  if (!code || !symptom) return fail(res, 'machineCode and symptom are required', 400);
+  if (!['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(priority)) return fail(res, 'priority must be CRITICAL, HIGH, MEDIUM or LOW', 400);
+  try {
+    const rows = await query<any>('SELECT id, code, name FROM machines WHERE code = ? LIMIT 1', [code]);
+    const machine = rows[0];
+    if (!machine) return fail(res, `Unknown machine ${code}`, 404);
+    const alertType = symptom.slice(0, 80);
+    const action = await proposeAction({
+      sessionId: String(req.body?.source || 'ops-twin'),
+      type: 'CREATE_WORK_ORDER',
+      params: { machineId: machine.id, machineCode: machine.code, symptom, priority, alertType },
+      summary: `Create ${priority} work order for ${machine.code}: ${alertType}`,
+      rationale: `Requested from the Ops Twin page by ${requester.name || 'an operator'}`,
+      requestedBy: `${requester.name || 'Operator'} (${requester.role || 'user'}) via Ops Twin`,
+    });
+    ok(res, action);
   } catch (e) { fail(res, e); }
 });
 

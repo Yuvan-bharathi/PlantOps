@@ -108,12 +108,18 @@ jobs:
             npm run build
             pm2 reload plantops-simulator --update-env || pm2 start dist/index.js --name "plantops-simulator"
             
-            # 5. Set Permissions & Reload Nginx
+            # 5. Static assets: make sure everything from frontend/public (3D .glb models, logo)
+            #    is in the served dist folder — without them nginx falls back to index.html and the
+            #    3D pages fail with "Unexpected token '<' ... is not valid JSON".
+            cp -rn /home/ubuntu/PlantOps/frontend/public/. /home/ubuntu/PlantOps/frontend/dist/
+            test -f /home/ubuntu/PlantOps/frontend/dist/models/kenney-city-kit-roads/road-straight.glb || { echo "❌ 3D models missing from frontend/dist"; exit 1; }
+
+            # 6. Set Permissions & Reload Nginx
             sudo chmod 755 /home/ubuntu
             sudo chmod -R 755 /home/ubuntu/PlantOps/frontend/dist
             sudo nginx -t && sudo systemctl reload nginx
             
-            # 6. Persist PM2 Process List
+            # 7. Persist PM2 Process List
             pm2 save
             
             echo "✅ Deployment completed successfully! Live at http://${{ secrets.EC2_HOST || '13.61.62.35' }}"

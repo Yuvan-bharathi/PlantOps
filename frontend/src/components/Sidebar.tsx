@@ -4,7 +4,7 @@ import {
   ClipboardList, HardHat, Boxes, ShoppingCart, Building2,
   ClipboardCheck, BrainCircuit, BarChart3, Settings, FileSpreadsheet,
   Play, RotateCcw, Leaf, PanelLeftClose, PanelLeftOpen, Sparkles,
-  Activity, Shield, Lock, Truck, Zap, Calendar, Navigation
+  Activity, Shield, Lock, Truck, Zap, Calendar, Navigation, Layers
 } from 'lucide-react';
 
 import { UserProfile, RoleKey } from './Operations/LoginPage';
@@ -32,18 +32,18 @@ interface SidebarProps {
 
 const ROLE_PERMITTED_TABS: Record<RoleKey, string[]> = {
   PLANT_ADMIN: [
-    'dashboard', 'assistant', 'power', 'history', 'production', 'fleet', 'twin', 'machines', 'iot', 'telemetry',
+    'dashboard', 'assistant', 'power', 'history', 'production', 'fleet', 'twin', 'ops-twin', 'machines', 'iot', 'telemetry',
     'incidents', 'maintenance', 'work-orders', 'technicians', 'inventory',
     'procurement', 'suppliers', 'review', 'ai', /* 'domo', 'settings', */ 'login'
   ],
   MANAGER: [
-    'dashboard', 'assistant', 'history', 'power', 'twin', 'production', 'fleet', 'procurement', 'suppliers', 'review', /* 'domo', */ 'login'
+    'dashboard', 'assistant', 'history', 'power', 'twin', 'ops-twin', 'production', 'fleet', 'procurement', 'suppliers', 'review', /* 'domo', */ 'login'
   ],
   SUPERVISOR: [
-    'dashboard', 'assistant', 'power', 'history', 'twin', 'production', 'fleet', 'machines', 'incidents', 'maintenance', 'work-orders', 'technicians', 'login'
+    'dashboard', 'assistant', 'power', 'history', 'twin', 'ops-twin', 'production', 'fleet', 'machines', 'incidents', 'maintenance', 'work-orders', 'technicians', 'login'
   ],
   TECHNICIAN: [
-    'dashboard', 'assistant', 'power', 'history', 'twin', 'work-orders', 'maintenance', 'telemetry', 'ai', 'login'
+    'dashboard', 'assistant', 'power', 'history', 'twin', 'ops-twin', 'work-orders', 'maintenance', 'telemetry', 'ai', 'login'
   ],
   INVENTORY_MGMT: [
     'dashboard', 'assistant', 'history', 'inventory', 'procurement', 'suppliers', 'production', 'fleet', 'login'
@@ -62,6 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'production', label: 'Production & AGV', icon: Truck },
     { id: 'fleet', label: 'Live Fleet Tracking', icon: Navigation },
     { id: 'twin', label: '3D Digital Twin', icon: Box },
+    { id: 'ops-twin', label: 'Ops Twin (Beta)', icon: Layers },
     { id: 'machines', label: 'Machines', icon: Cog },
     { id: 'iot', label: 'IoT Devices', icon: RadioTower },
     { id: 'telemetry', label: 'Telemetry', icon: Activity },
